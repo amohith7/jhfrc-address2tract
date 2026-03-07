@@ -1,0 +1,7 @@
+pandas>=2.0
+geopandas>=0.14
+shapely>=2.0
+openpyxl>=3.1
+pyogrio>=0.7
+requests>=2.31
+pyyaml>=6.0

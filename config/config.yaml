@@ -1,0 +1,35 @@
+# JHFRC Address to Census Tract Converter
+# Configuration File
+# -----------------------------------------------
+# Most settings here can also be overridden from the command line.
+# See README.md or run `python main.py --help` for available options.
+
+
+# Directory where the Census tract reference dataset is stored.
+# The dataset is downloaded automatically on first use.
+reference_dir: data/reference
+
+
+# Enable Census Geocoder API fallback for records that could not be
+# matched during the primary batch geocoding step.
+# Set to false to skip fallback and accept the batch results as-is.
+use_fallback: true
+
+
+# Geocoder settings
+geocoder:
+
+  # Number of addresses to send per batch request to the Census API.
+  # The Census API supports up to 10,000; 1,000 is a safer default.
+  batch_size: 1000
+
+  # Seconds to wait before timing out a batch geocoding request.
+  batch_timeout: 120
+
+  # Seconds to pause between individual fallback geocoding requests.
+  # This helps avoid overloading the Census API during fallback.
+  fallback_delay: 0.5
+
+
+# Log detail level: DEBUG, INFO, WARNING, or ERROR
+log_level: INFO
