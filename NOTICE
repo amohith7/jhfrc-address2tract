@@ -1,0 +1,23 @@
+JHFRC Address to Census Tract Converter
+========================================
+
+This tool was developed by the Journey Health Foundation Research Center (JHFRC)
+at the University of Tennessee at Chattanooga.
+
+It is intended for use by nonprofit partner organizations as part of collaborative
+community health research.
+
+---
+
+Geocoding is performed using the U.S. Census Bureau Geocoding Services API,
+which is a free public service provided by the U.S. Census Bureau.
+  https://geocoding.geo.census.gov/
+
+Census tract boundary data is sourced from the U.S. Census Bureau
+TIGER/Line Cartographic Boundary Files, which are in the public domain.
+  https://www.census.gov/geographies/mapping-files/time-series/geo/cartographic-boundary.html
+
+---
+
+For questions about this tool, contact:
+  mohith-addepalli@utc.edu

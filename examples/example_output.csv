@@ -1,0 +1,6 @@
+client_id,street,city,state,zip,cleaned_address,census_tract_geoid,match_status,error_reason
+1001,123 Main St,Nashville,TN,37201,123 MAIN ST, NASHVILLE, TN 37201,47037013900,Matched,
+1002,456 Elm Ave,Memphis,TN,38103,456 ELM AVE, MEMPHIS, TN 38103,47157010600,Matched,
+1003,789 Oak Dr,Chattanooga,TN,37402,789 OAK DR, CHATTANOOGA, TN 37402,47065001600,Matched,
+1004,321 Maple Blvd,Knoxville,TN,37902,321 MAPLE BLVD, KNOXVILLE, TN 37902,47093002800,Matched,
+1005,555 River Rd,Clarksville,TN,37040,,, No_Match,Address could not be geocoded
