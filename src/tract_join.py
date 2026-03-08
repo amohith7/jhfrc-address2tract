@@ -122,6 +122,9 @@ def join_points_to_tracts(
     Regular DataFrame with 'census_tract_geoid' column added.
     Rows without valid coordinates receive a null GEOID.
     """
+    # Drop any pre-existing tract GEOID column to avoid duplicates on re-runs
+    geo_df = geo_df.drop(columns=["census_tract_geoid"], errors="ignore")
+
     # Build GEOID column if not present
     if "GEOID" not in tracts.columns:
         if all(c in tracts.columns for c in ["STATEFP", "COUNTYFP", "TRACTCE"]):
@@ -179,7 +182,8 @@ def join_points_to_tracts(
     invalid_points["census_tract_geoid"] = None
 
     combined = pd.concat(
-        [pd.DataFrame(joined), pd.DataFrame(invalid_points)],
+        [pd.DataFrame(joined).reset_index(drop=True),
+         pd.DataFrame(invalid_points).reset_index(drop=True)],
         ignore_index=True,
     )
 

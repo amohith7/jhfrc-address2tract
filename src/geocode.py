@@ -2,12 +2,17 @@
 Geocoder
 
 Converts addresses to latitude/longitude coordinates using the U.S. Census
-Geocoding Services API.
+Geocoding Services API (Geography endpoint).
 
-Primary method  : Census Geocoder Batch API (processes many addresses at once)
-Fallback method : Census Geocoder One-Line Address API (one address at a time)
+The geography endpoint returns both coordinates AND Census tract information
+in a single call, which is used as a backup GEOID source only when the
+local GeoPackage spatial join cannot assign a tract.
 
-Both methods are free and do not require an API key.
+Primary tract source : GeoPackage spatial join (local, no API needed)
+Geocoding service    : Census Geography Batch API (address → coordinates)
+Fallback geocoding   : Census Geography One-Line API (one address at a time)
+
+Both Census API methods are free and do not require an API key.
 """
 
 import io
@@ -19,8 +24,12 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-BATCH_URL = "https://geocoding.geo.census.gov/geocoder/locations/addressbatch"
-ONELINE_URL = "https://geocoding.geo.census.gov/geocoder/locations/onelineaddress"
+# Geography endpoints return both coordinates AND census tract info
+BATCH_URL = "https://geocoding.geo.census.gov/geocoder/geographies/addressbatch"
+ONELINE_URL = "https://geocoding.geo.census.gov/geocoder/geographies/onelineaddress"
+
+BENCHMARK = "Public_AR_Current"
+VINTAGE = "Current_Current"
 
 DEFAULT_BATCH_SIZE = 1000   # Census API supports up to 10,000; 1,000 is safer
 DEFAULT_BATCH_TIMEOUT = 120  # seconds
@@ -34,7 +43,10 @@ def geocode_batch(
     timeout: int = DEFAULT_BATCH_TIMEOUT,
 ) -> pd.DataFrame:
     """
-    Geocode addresses using the Census Geocoder Batch API.
+    Geocode addresses using the Census Geography Batch API.
+
+    Returns coordinates for use in GeoPackage spatial join (primary tract source),
+    plus a census_api_geoid field used only as backup when the spatial join fails.
 
     Parameters
     ----------
@@ -46,12 +58,12 @@ def geocode_batch(
     Returns
     -------
     DataFrame with columns:
-        unique_id, latitude, longitude, match_status, matched_address
+        unique_id, latitude, longitude, match_status, matched_address,
+        census_api_geoid (backup GEOID from Census API, may be None)
     """
     results = []
     total = len(addresses)
 
-    # Reset index so iloc alignment is safe
     addresses = addresses.reset_index(drop=True)
     unique_ids = unique_ids.reset_index(drop=True)
 
@@ -72,7 +84,7 @@ def geocode_batch(
         try:
             response = requests.post(
                 BATCH_URL,
-                data={"benchmark": "Public_AR_Current"},
+                data={"benchmark": BENCHMARK, "vintage": VINTAGE},
                 files={
                     "addressFile": (
                         "addresses.csv",
@@ -96,7 +108,14 @@ def geocode_batch(
 
 
 def _parse_batch_response(response_text: str, chunk_ids: pd.Series) -> list:
-    """Parse the CSV response from the Census Batch Geocoder."""
+    """
+    Parse the CSV response from the Census Geography Batch Geocoder.
+
+    The geography endpoint returns 12 columns:
+      ID, Input Address, Match, Match Type, Matched Address, Coordinates,
+      Tiger Line ID, Tiger Line Side, State FIPS, County FIPS,
+      Census Tract, Census Block
+    """
     found_ids = set()
 
     try:
@@ -106,6 +125,7 @@ def _parse_batch_response(response_text: str, chunk_ids: pd.Series) -> list:
             names=[
                 "id", "input_addr", "match", "match_type",
                 "matched_addr", "coords", "tiger_line", "side",
+                "state_fips", "county_fips", "census_tract", "census_block",
             ],
             dtype=str,
         )
@@ -119,9 +139,9 @@ def _parse_batch_response(response_text: str, chunk_ids: pd.Series) -> list:
         found_ids.add(uid)
 
         lat, lon = None, None
-        match_status = str(row.get("match", "")).strip()
+        match_indicator = str(row.get("match", "")).strip()
 
-        if match_status == "Match":
+        if match_indicator == "Match":
             coords = str(row.get("coords", ""))
             if "," in coords:
                 try:
@@ -132,6 +152,15 @@ def _parse_batch_response(response_text: str, chunk_ids: pd.Series) -> list:
                     pass
 
         matched_addr = str(row.get("matched_addr", "")).strip() or None
+
+        # Build GEOID from geography columns returned by the Census API.
+        # This is stored as a backup only — GeoPackage spatial join is primary.
+        census_api_geoid = _build_geoid(
+            row.get("state_fips", ""),
+            row.get("county_fips", ""),
+            row.get("census_tract", ""),
+        )
+
         if lat is not None and lon is not None:
             results.append({
                 "unique_id": uid,
@@ -139,11 +168,12 @@ def _parse_batch_response(response_text: str, chunk_ids: pd.Series) -> list:
                 "longitude": lon,
                 "match_status": "Matched",
                 "matched_address": matched_addr,
+                "census_api_geoid": census_api_geoid,
             })
         else:
             results.append(_no_match(uid))
 
-    # Add any records the API did not return a row for
+    # Records not returned by the API at all
     for uid in chunk_ids:
         if str(uid) not in found_ids:
             results.append(_no_match(str(uid)))
@@ -153,15 +183,17 @@ def _parse_batch_response(response_text: str, chunk_ids: pd.Series) -> list:
 
 def geocode_single(address: str, unique_id: str) -> dict:
     """
-    Geocode a single address using the Census one-line address API.
-    Used as fallback for records that the batch geocoder could not match.
+    Geocode a single address using the Census Geography one-line API.
+    Used as fallback for records the batch geocoder could not match.
+    Returns coordinates (for GeoPackage spatial join) and a backup GEOID.
     """
     try:
         response = requests.get(
             ONELINE_URL,
             params={
                 "address": address,
-                "benchmark": "Public_AR_Current",
+                "benchmark": BENCHMARK,
+                "vintage": VINTAGE,
                 "format": "json",
             },
             timeout=30,
@@ -175,12 +207,20 @@ def geocode_single(address: str, unique_id: str) -> dict:
             lat = coords.get("y")
             lon = coords.get("x")
             if lat is not None and lon is not None:
+                # Try to get backup GEOID from the geography response
+                tracts = (
+                    match.get("geographies", {})
+                    .get("Census Tracts", [])
+                )
+                census_api_geoid = tracts[0].get("GEOID") if tracts else None
+
                 return {
                     "unique_id": unique_id,
                     "latitude": float(lat),
                     "longitude": float(lon),
                     "match_status": "Matched_Fallback",
                     "matched_address": match.get("matchedAddress", ""),
+                    "census_api_geoid": census_api_geoid,
                 }
     except Exception as e:
         logger.debug(f"  Fallback geocoding failed for ID {unique_id}: {e}")
@@ -200,7 +240,7 @@ def geocode_fallback(
 
     Parameters
     ----------
-    unmatched_df : DataFrame of records that were not matched in the batch step.
+    unmatched_df : DataFrame of records not matched in the batch step.
     address_col  : Name of the column containing the address string.
     id_col       : Name of the unique identifier column.
     delay        : Seconds to pause between requests.
@@ -208,7 +248,8 @@ def geocode_fallback(
     Returns
     -------
     DataFrame with columns:
-        unique_id, latitude, longitude, match_status, matched_address
+        unique_id, latitude, longitude, match_status, matched_address,
+        census_api_geoid
     """
     results = []
     total = len(unmatched_df)
@@ -224,6 +265,20 @@ def geocode_fallback(
     return pd.DataFrame(results)
 
 
+def _build_geoid(state: str, county: str, tract: str) -> str | None:
+    """
+    Construct an 11-digit Census GEOID from state, county, and tract FIPS codes.
+    Returns None if any component is missing or invalid.
+    """
+    s = str(state).strip()
+    c = str(county).strip()
+    t = str(tract).strip()
+    invalid = {"", "nan", "None"}
+    if s in invalid or c in invalid or t in invalid:
+        return None
+    return s.zfill(2) + c.zfill(3) + t.zfill(6)
+
+
 def _no_match(unique_id: str) -> dict:
     return {
         "unique_id": unique_id,
@@ -231,4 +286,5 @@ def _no_match(unique_id: str) -> dict:
         "longitude": None,
         "match_status": "No_Match",
         "matched_address": None,
+        "census_api_geoid": None,
     }
