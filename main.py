@@ -132,17 +132,25 @@ def _combine_address_fields(row: pd.Series, street: str, city: str, state: str, 
     return ", ".join(parts)
 
 
-def _print_summary(total: int, matched: int, fallback: int, unmatched: int, rejected: int) -> None:
+def _print_summary(
+    total: int,
+    matched_gpkg: int,
+    matched_api_backup: int,
+    matched_fallback: int,
+    unmatched: int,
+    rejected: int,
+) -> None:
     print()
-    print("=" * 52)
+    print("=" * 56)
     print("  PROCESSING SUMMARY")
-    print("=" * 52)
-    print(f"  Total rows processed      : {total:,}")
-    print(f"  Matched (primary)         : {matched:,}")
-    print(f"  Matched (fallback)        : {fallback:,}")
-    print(f"  Unmatched                 : {unmatched:,}")
-    print(f"  Rejected (missing data)   : {rejected:,}")
-    print("=" * 52)
+    print("=" * 56)
+    print(f"  Total rows processed          : {total:,}")
+    print(f"  Matched — GeoPackage (primary): {matched_gpkg:,}")
+    print(f"  Matched — Census API (backup) : {matched_api_backup:,}")
+    print(f"  Matched — Fallback geocoding  : {matched_fallback:,}")
+    print(f"  Unmatched                     : {unmatched:,}")
+    print(f"  Rejected (missing data)       : {rejected:,}")
+    print("=" * 56)
     print()
 
 
@@ -245,11 +253,12 @@ def main() -> None:
         logger.info(f"{rejected_count} row(s) rejected due to missing ID or address.")
 
     # ------------------------------------------------------------------
-    # 6. Primary geocoding (Census Batch API)
+    # 6. Geocoding — Census Geography Batch API (address → coordinates)
+    #    The geography endpoint also returns a tract GEOID from the Census
+    #    API, stored as census_api_geoid and used only as backup below.
     # ------------------------------------------------------------------
-    logger.info(f"Starting primary geocoding for {len(valid_df):,} records...")
+    logger.info(f"Geocoding {len(valid_df):,} records via Census Geography Batch API...")
 
-    # Ensure ID column is string for consistent merging
     valid_df[args.id_column] = valid_df[args.id_column].astype(str)
 
     geo_results = geocode_batch(
@@ -261,24 +270,68 @@ def main() -> None:
     geo_results["unique_id"] = geo_results["unique_id"].astype(str)
 
     valid_df = valid_df.merge(
-        geo_results[["unique_id", "latitude", "longitude", "match_status", "matched_address"]],
+        geo_results[[
+            "unique_id", "latitude", "longitude",
+            "match_status", "matched_address", "census_api_geoid",
+        ]],
         left_on=args.id_column,
         right_on="unique_id",
         how="left",
     ).drop(columns=["unique_id"])
 
     # ------------------------------------------------------------------
-    # 7. Fallback geocoding for unmatched records (Census single API)
+    # 7. PRIMARY tract assignment — GeoPackage spatial join (local)
+    #    All records with coordinates are joined against the local
+    #    GeoPackage. This is the authoritative source for census_tract_geoid.
+    # ------------------------------------------------------------------
+    try:
+        tracts = get_tract_dataset(reference_dir)
+    except Exception as e:
+        print(f"\nError loading Census tract dataset:\n  {e}")
+        sys.exit(1)
+
+    logger.info("Primary tract assignment: GeoPackage spatial join...")
+    valid_df = join_points_to_tracts(valid_df, tracts)
+
+    # ------------------------------------------------------------------
+    # 8. BACKUP tract assignment — Census API GEOID
+    #    For records where the GeoPackage spatial join returned no tract
+    #    (rare — e.g. coordinates near a tract boundary), use the GEOID
+    #    returned directly by the Census Geography batch API as backup.
+    # ------------------------------------------------------------------
+    gpkg_null = valid_df["census_tract_geoid"].isna()
+    api_geoid_available = valid_df.get("census_api_geoid", pd.Series(dtype=str)).notna()
+    has_coords = valid_df["match_status"].isin(["Matched", "Matched_Fallback"])
+
+    use_api_backup = gpkg_null & api_geoid_available & has_coords
+    backup_count = int(use_api_backup.sum())
+
+    if backup_count > 0:
+        logger.info(
+            f"Census API GEOID backup applied to {backup_count} record(s) "
+            "where GeoPackage spatial join returned no tract."
+        )
+        valid_df.loc[use_api_backup, "census_tract_geoid"] = (
+            valid_df.loc[use_api_backup, "census_api_geoid"]
+        )
+        valid_df.loc[use_api_backup, "match_status"] = "Matched_CensusAPI_Backup"
+
+    valid_df = valid_df.drop(columns=["census_api_geoid"], errors="ignore")
+
+    # ------------------------------------------------------------------
+    # 9. FALLBACK geocoding — Census single-address API
+    #    Only for records the batch geocoder could not geocode at all.
+    #    After getting coordinates, GeoPackage spatial join runs again.
     # ------------------------------------------------------------------
     fallback_count = 0
     if use_fallback:
-        unmatched_mask = valid_df["match_status"] != "Matched"
+        unmatched_mask = valid_df["match_status"] == "No_Match"
         unmatched_for_fallback = valid_df[unmatched_mask].copy()
 
         if len(unmatched_for_fallback) > 0:
             logger.info(
-                f"Running Census API fallback for {len(unmatched_for_fallback)} "
-                "unmatched record(s)..."
+                f"Fallback: Census single-address API for "
+                f"{len(unmatched_for_fallback)} unmatched record(s)..."
             )
             fallback_results = geocode_fallback(
                 unmatched_df=unmatched_for_fallback,
@@ -296,22 +349,43 @@ def main() -> None:
                     valid_df.loc[mask, "longitude"] = fb_row["longitude"]
                     valid_df.loc[mask, "match_status"] = "Matched_Fallback"
                     valid_df.loc[mask, "matched_address"] = fb_row["matched_address"]
+                    valid_df.loc[mask, "census_api_geoid"] = fb_row.get("census_api_geoid")
                     fallback_count += 1
 
-    # ------------------------------------------------------------------
-    # 8. Load Census tract dataset and perform spatial join
-    # ------------------------------------------------------------------
-    try:
-        tracts = get_tract_dataset(reference_dir)
-    except Exception as e:
-        print(f"\nError loading Census tract dataset:\n  {e}")
-        sys.exit(1)
+            # Re-run GeoPackage spatial join for newly geocoded fallback records
+            if fallback_count > 0:
+                logger.info("Re-running GeoPackage spatial join for fallback-geocoded records...")
+                fallback_mask = valid_df["match_status"] == "Matched_Fallback"
+                fallback_rows = valid_df[fallback_mask].copy()
+                fallback_rows = join_points_to_tracts(fallback_rows, tracts)
 
-    logger.info("Performing spatial join to Census tracts...")
-    valid_df = join_points_to_tracts(valid_df, tracts)
+                # Apply Census API backup for fallback rows where GeoPackage still null
+                fb_gpkg_null = fallback_rows["census_tract_geoid"].isna()
+                fb_api_available = fallback_rows.get(
+                    "census_api_geoid", pd.Series(dtype=str)
+                ).notna()
+                fb_use_backup = fb_gpkg_null & fb_api_available
+                if fb_use_backup.any():
+                    fallback_rows.loc[fb_use_backup, "census_tract_geoid"] = (
+                        fallback_rows.loc[fb_use_backup, "census_api_geoid"]
+                    )
+                    fallback_rows.loc[fb_use_backup, "match_status"] = "Matched_CensusAPI_Backup"
+
+                fallback_rows = fallback_rows.drop(columns=["census_api_geoid"], errors="ignore")
+                valid_df = valid_df.drop(columns=["census_api_geoid"], errors="ignore")
+
+                # Merge fallback spatial join results back
+                valid_df.loc[fallback_mask, "census_tract_geoid"] = (
+                    fallback_rows["census_tract_geoid"].values
+                )
+                valid_df.loc[fallback_mask, "match_status"] = (
+                    fallback_rows["match_status"].values
+                )
+
+    valid_df = valid_df.drop(columns=["census_api_geoid"], errors="ignore")
 
     # ------------------------------------------------------------------
-    # 9. Set error reasons
+    # 10. Set error reasons
     # ------------------------------------------------------------------
     valid_df["error_reason"] = None
 
@@ -319,7 +393,7 @@ def main() -> None:
     valid_df.loc[no_coords, "error_reason"] = "Address could not be geocoded"
 
     matched_but_no_tract = (
-        valid_df["match_status"].isin(["Matched", "Matched_Fallback"])
+        valid_df["match_status"].isin(["Matched", "Matched_Fallback", "Matched_CensusAPI_Backup"])
         & valid_df["census_tract_geoid"].isna()
     )
     valid_df.loc[matched_but_no_tract, "error_reason"] = (
@@ -371,14 +445,16 @@ def main() -> None:
     # ------------------------------------------------------------------
     # 12. Print summary
     # ------------------------------------------------------------------
-    matched_primary = int((valid_df["match_status"] == "Matched").sum())
+    matched_gpkg = int((valid_df["match_status"] == "Matched").sum())
+    matched_api_backup = int((valid_df["match_status"] == "Matched_CensusAPI_Backup").sum())
     matched_fb = int((valid_df["match_status"] == "Matched_Fallback").sum())
     unmatched_final = int((valid_df["match_status"] == "No_Match").sum())
 
     _print_summary(
         total=len(df),
-        matched=matched_primary,
-        fallback=matched_fb,
+        matched_gpkg=matched_gpkg,
+        matched_api_backup=matched_api_backup,
+        matched_fallback=matched_fb,
         unmatched=unmatched_final,
         rejected=rejected_count,
     )
