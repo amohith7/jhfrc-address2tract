@@ -35,10 +35,14 @@ from utils.io import read_input, write_output
 
 def _setup_logging(level: str = "INFO") -> None:
     logging.basicConfig(
+        stream=sys.stdout,
         level=getattr(logging, level.upper(), logging.INFO),
         format="%(asctime)s  %(message)s",
         datefmt="%H:%M:%S",
     )
+    # Suppress noisy internal messages from geopandas/pyogrio
+    logging.getLogger("pyogrio").setLevel(logging.WARNING)
+    logging.getLogger("fiona").setLevel(logging.WARNING)
 
 
 def _load_config(config_path: str) -> dict:
@@ -297,7 +301,6 @@ def main() -> None:
     # ------------------------------------------------------------------
     # 8. Load Census tract dataset and perform spatial join
     # ------------------------------------------------------------------
-    logger.info("Loading Census tract dataset...")
     try:
         tracts = get_tract_dataset(reference_dir)
     except Exception as e:
