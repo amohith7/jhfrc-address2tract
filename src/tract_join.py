@@ -127,13 +127,19 @@ def join_points_to_tracts(
         if all(c in tracts.columns for c in ["STATEFP", "COUNTYFP", "TRACTCE"]):
             tracts = tracts.copy()
             tracts["GEOID"] = (
-                tracts["STATEFP"] + tracts["COUNTYFP"] + tracts["TRACTCE"]
+                tracts["STATEFP"].astype(str).str.zfill(2)
+                + tracts["COUNTYFP"].astype(str).str.zfill(3)
+                + tracts["TRACTCE"].astype(str).str.zfill(6)
             )
         else:
             raise ValueError(
                 "Cannot find a GEOID column in the Census tract dataset. "
                 "Expected 'GEOID' or 'STATEFP'+'COUNTYFP'+'TRACTCE'."
             )
+
+    # Ensure GEOID is always stored and returned as a string (never float)
+    tracts = tracts.copy()
+    tracts["GEOID"] = tracts["GEOID"].astype(str).str.strip()
 
     # Normalize CRS to WGS84
     if tracts.crs is None:
@@ -176,4 +182,15 @@ def join_points_to_tracts(
         [pd.DataFrame(joined), pd.DataFrame(invalid_points)],
         ignore_index=True,
     )
+
+    # Ensure GEOID is returned as a clean string (not float like 4.706e+10)
+    def _clean_geoid(val):
+        if val is None or (isinstance(val, float) and pd.isna(val)):
+            return None
+        s = str(val).strip()
+        if s.endswith(".0"):
+            s = s[:-2]
+        return s if s not in ("nan", "None", "") else None
+
+    combined["census_tract_geoid"] = combined["census_tract_geoid"].apply(_clean_geoid)
     return combined
