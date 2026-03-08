@@ -259,46 +259,9 @@ python main.py \
 
 ---
 
-## Automatic Census Tract Dataset Download
+## First Run Note
 
-The first time you run this tool, it will automatically download the official U.S. Census Bureau tract boundary file. This file is used to match coordinates to Census tracts.
-
-What happens:
-1. The tool checks whether the file already exists at `data/reference/census_tracts.gpkg`.
-2. If the file is missing, it downloads the national Census tract shapefile from the U.S. Census Bureau website.
-3. It converts the shapefile to a GeoPackage and saves it locally.
-4. On all future runs, the locally saved file is used — **no repeated downloads**.
-
-The download is approximately 50–60 MB and may take a few minutes depending on your internet connection. Progress will be displayed while it downloads.
-
----
-
-## How the Matching Workflow Works
-
-The tool processes your file in the following steps:
-
-1. **Read the input file** — loads your Excel or CSV file.
-2. **Check for sensitive columns** — scans column names for PHI indicators. Stops if any are found.
-3. **Combine address fields** — if you provided separate columns, they are joined into a single address string internally.
-4. **Validate rows** — records with a missing ID or empty address are flagged and excluded from geocoding.
-5. **Geocoding** — sends your addresses to the Census Geocoder in batches. Each address is converted to a latitude and longitude coordinate.
-6. **Primary tract assignment (GeoPackage)** — the coordinates are compared against the local Census tract boundary file to determine which tract each address falls in. This is the main and authoritative source of tract information.
-7. **Census API backup** — for any record where the local boundary file could not assign a tract (rare), the tool uses the tract information returned directly by the Census Geocoder as a backup.
-8. **Fallback geocoding** — any records that could not be geocoded in step 5 are submitted to the Census Geocoder one at a time. The local boundary file is then used again to assign their tract.
-9. **Assemble output** — all results are combined into a single file, including records that could not be matched.
-10. **Print summary** — a brief summary is displayed showing how many records were matched, unmatched, or rejected.
-
----
-
-## Fallback Geocoding
-
-When fallback is enabled (the default), addresses that were not matched during the batch step are submitted to the Census Geocoder one at a time. This can improve match rates for addresses that are formatted differently or have minor inconsistencies.
-
-Fallback geocoding is slower than batch geocoding. It is automatically rate-limited to avoid overloading the Census API.
-
-Records matched by the fallback method will have `Matched_Fallback` in the `match_status` column so they can be identified.
-
-You can disable fallback with the `--no-fallback` flag, or change the default in `config/config.yaml`.
+The first time you run this tool, it will automatically download the official U.S. Census Bureau tract boundary file (~55 MB). This only happens once — all future runs use the locally saved file. Progress will be shown while it downloads.
 
 ---
 
