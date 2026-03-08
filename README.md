@@ -93,37 +93,122 @@ This check is based on column **names only** — it does not read or examine the
 
 ### Prerequisites
 
-You will need Python 3.10 or later installed on your computer. You can download Python from [python.org](https://www.python.org/downloads/).
+You will need **Python 3.10 or later** installed on your computer.
 
-### Step 1: Get the project
-
-Clone or download this repository to your computer.
-
-If you have Git installed:
-```bash
-git clone https://github.com/your-org/jhfrc-address2tract.git
-cd jhfrc-address2tract
+To check if Python is already installed, open a terminal (see below) and type:
 ```
+python --version
+```
+If you see a version number like `Python 3.11.2`, you are ready. If you see an error or a version older than 3.10, download and install Python from [python.org](https://www.python.org/downloads/). During installation on Windows, check the box that says **"Add Python to PATH"** before clicking Install.
 
-Or download and unzip the repository from GitHub, then open a terminal in that folder.
+---
 
-### Step 2: Create a virtual environment (recommended)
+### How to Open a Terminal
 
-```bash
+A terminal (also called a command prompt or shell) is a text window where you type commands. Here is how to open one on each operating system.
+
+#### Windows
+
+**Option A — Command Prompt**
+1. Press the **Windows key** on your keyboard (or click the Start button).
+2. Type `cmd` in the search box.
+3. Click **Command Prompt** in the results.
+
+**Option B — PowerShell**
+1. Press the **Windows key**.
+2. Type `powershell` in the search box.
+3. Click **Windows PowerShell** in the results.
+
+**Option C — From a folder (easiest)**
+1. Open **File Explorer** and navigate to the project folder.
+2. Click on the address bar at the top of the window (it shows the folder path).
+3. Type `cmd` and press **Enter**. A Command Prompt will open already inside that folder.
+
+#### Mac
+
+1. Press **Command + Space** to open Spotlight Search.
+2. Type `Terminal` and press **Enter**.
+
+#### Linux
+
+1. Press **Ctrl + Alt + T** on most distributions.
+2. Or search for "Terminal" in your application menu.
+
+---
+
+### Step 1: Download the project
+
+1. Go to the project page on GitHub.
+2. Click the green **Code** button near the top right.
+3. Click **Download ZIP**.
+4. Once downloaded, right-click the ZIP file and select **Extract All** (Windows) or double-click it (Mac).
+5. Note where the extracted folder is saved — for example, `C:\Users\YourName\Downloads\jhfrc-address2tract`.
+
+---
+
+### Step 2: Open a terminal inside the project folder
+
+**Windows:**
+1. Open **File Explorer** and navigate into the `jhfrc-address2tract` folder.
+2. Click on the address bar at the top and type `cmd`, then press **Enter**.
+3. A Command Prompt window will open already inside the project folder.
+
+**Mac:**
+1. Open **Terminal**.
+2. Type `cd ` (with a space after it), then drag the `jhfrc-address2tract` folder from Finder into the Terminal window. Press **Enter**.
+
+You can confirm you are in the right folder by typing:
+```
+dir
+```
+(Windows) or:
+```
+ls
+```
+(Mac/Linux). You should see files like `main.py` and `requirements.txt` listed.
+
+---
+
+### Step 3: Create a virtual environment (recommended)
+
+A virtual environment keeps this tool's software separate from other programs on your computer. This is optional but recommended.
+
+In your terminal, type:
+```
 python -m venv .venv
 ```
 
-Activate it:
-- **Windows**: `.venv\Scripts\activate`
-- **Mac/Linux**: `source .venv/bin/activate`
+Then activate it:
 
-### Step 3: Install required packages
+**Windows (Command Prompt):**
+```
+.venv\Scripts\activate
+```
 
-```bash
+**Windows (PowerShell):**
+```
+.venv\Scripts\Activate.ps1
+```
+
+**Mac / Linux:**
+```
+source .venv/bin/activate
+```
+
+When the virtual environment is active, you will see `(.venv)` at the beginning of your terminal prompt. You will need to activate it again each time you open a new terminal window.
+
+---
+
+### Step 4: Install required packages
+
+In your terminal (with the virtual environment active), type:
+```
 pip install -r requirements.txt
 ```
 
-This installs all necessary libraries. It only needs to be done once.
+This downloads and installs all required software libraries. It only needs to be done once. The process may take a minute or two.
+
+When it finishes, you are ready to run the tool.
 
 ---
 
@@ -196,11 +281,12 @@ The tool processes your file in the following steps:
 2. **Check for sensitive columns** — scans column names for PHI indicators. Stops if any are found.
 3. **Combine address fields** — if you provided separate columns, they are joined into a single address string internally.
 4. **Validate rows** — records with a missing ID or empty address are flagged and excluded from geocoding.
-5. **Primary geocoding** — sends your addresses to the Census Geocoder Batch API in groups. Each address is matched to a latitude and longitude.
-6. **Spatial join** — matched coordinates are compared against Census tract boundaries to determine the tract GEOID.
-7. **Fallback geocoding** — any records that could not be matched in step 5 are submitted one at a time to the Census Geocoder API (if fallback is enabled).
-8. **Assemble output** — all results are combined into a single file, including records that could not be matched.
-9. **Print summary** — a brief summary is displayed showing how many records were matched, unmatched, or rejected.
+5. **Geocoding** — sends your addresses to the Census Geocoder in batches. Each address is converted to a latitude and longitude coordinate.
+6. **Primary tract assignment (GeoPackage)** — the coordinates are compared against the local Census tract boundary file to determine which tract each address falls in. This is the main and authoritative source of tract information.
+7. **Census API backup** — for any record where the local boundary file could not assign a tract (rare), the tool uses the tract information returned directly by the Census Geocoder as a backup.
+8. **Fallback geocoding** — any records that could not be geocoded in step 5 are submitted to the Census Geocoder one at a time. The local boundary file is then used again to assign their tract.
+9. **Assemble output** — all results are combined into a single file, including records that could not be matched.
+10. **Print summary** — a brief summary is displayed showing how many records were matched, unmatched, or rejected.
 
 ---
 
@@ -231,9 +317,10 @@ The output file includes your original columns plus the following:
 
 | Value | Meaning |
 |---|---|
-| `Matched` | Address was successfully geocoded and matched to a Census tract. |
-| `Matched_Fallback` | Address was matched using the fallback geocoding method. |
-| `No_Match` | Address could not be geocoded. |
+| `Matched` | Address was geocoded and matched to a Census tract using the local boundary file. |
+| `Matched_CensusAPI_Backup` | Tract was assigned using the Census API directly, as a backup when the local boundary file returned no result. |
+| `Matched_Fallback` | Address required one-at-a-time geocoding as a fallback, then matched to a tract. |
+| `No_Match` | Address could not be geocoded after all methods were tried. |
 | `Rejected` | Record was missing a required ID or address and was not processed. |
 
 ---
