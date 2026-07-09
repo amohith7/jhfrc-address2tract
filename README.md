@@ -247,13 +247,34 @@ Change the names in the command to match your file:
 - `full_address` (or `street` / `city` / `state` / `zip`) — the names of your
   address column(s).
 
-That is all you need. You do not have to set anything else.
+That is all you need to change. The tool automatically tries every method to
+match as many addresses as possible, including a free OpenStreetMap lookup for
+hard-to-find addresses — you do not need to add anything to the command.
 
-### Step 3: Get your results
+### Step 3: Get your results and check the match rate
 
 When it finishes, open the result file (for example `data/output/results.xlsx`).
 It contains your original columns plus the Census tract for each address. See
 [Understanding the Output Columns](#understanding-the-output-columns) below.
+
+**Check how many addresses were matched.** When the tool finishes, it prints a
+short **summary** in the terminal that includes a line like:
+
+```
+Matched total : 995  (99.5%)
+Unmatched     : 5    (0.5%)
+```
+
+The result file itself does **not** show this percentage — it shows the status
+of each address one row at a time in the `match_status` column (rows that could
+not be matched say `No_Match`). To see the percentage, read the summary in the
+terminal, or in Excel turn on a filter and count how many rows say `No_Match`.
+
+**Please report a high No_Match rate.** A small number of unmatched addresses is
+normal. But if a large share of your addresses come back `No_Match` (for
+example more than about **10%**), please email JHFRC at **mohith-addepalli@utc.edu**
+with a few example addresses so we can look into it. The tool will also print a
+reminder in the terminal when the unmatched rate is above 10%.
 
 ### What to expect while it runs
 
@@ -266,23 +287,157 @@ It contains your original columns plus the Census tract for each address. See
 <details>
 <summary>Advanced options (most people do not need these)</summary>
 
+Both the Census retry and the free OpenStreetMap lookup are **on by default**,
+so a normal run already gets the highest match rate. The flags below are only if
+you want to change that.
+
 | Option | Description |
 |---|---|
 | `--sheet-name` | The Excel sheet to read, if your workbook has more than one sheet. |
-| `--no-fallback` | Turn off the slower one-at-a-time retry for hard addresses. |
+| `--no-fallback` | Turn off the slower Census one-at-a-time retry. |
+| `--no-external-fallback` | Turn off the OpenStreetMap lookup (makes runs faster, but matches fewer). |
+| `--chunk-size` | Number of rows to process per block for very large files. Set automatically; see [Processing Large Files](#processing-large-files). Use `0` to force a single pass. |
 | `--config` | Use a different settings file (default: `config/config.yaml`). |
 
-To try to match the small number of addresses the Census cannot find (using a
-free OpenStreetMap lookup), open `config/config.yaml` and change
-`use_external_fallback` to `true`. This is optional and makes runs slower.
-
 </details>
+
+### Step 4: Add the Census tract to your master file (optional)
+
+If your organization keeps a separate master spreadsheet and you would like the
+Census tract copied into it, you can join the two files in Excel using the shared
+unique identifier. The tool's result file and your master file must both contain
+the **same unique-identifier column** (for example `client_id`). Excel matches
+each row by that identifier and copies the corresponding `census_tract_geoid`
+into your master file.
+
+**Before you begin — preserve leading zeros.** Census tract identifiers are text,
+not numbers, and some begin with a leading zero (for example Alabama tracts begin
+with `01`). To prevent Excel from dropping that zero, format the destination
+column as **Text** first: select the column, then choose **Home → Number Format →
+Text** before entering the formula below.
+
+**Step-by-step:**
+
+1. Open **both** files in Excel: your master file and the tool's result file.
+2. In your master file, click the empty cell in the first data row of the column
+   where you want the Census tract to appear (this example assumes row 2).
+3. Enter **one** of the formulas below, then press **Enter** and copy the formula
+   down the whole column.
+
+**If you have Microsoft 365 or Excel 2021 or newer (recommended — use `XLOOKUP`):**
+
+```
+=XLOOKUP([unique ID cell], [result-file ID column], [result-file tract column], "Not found")
+```
+
+For example, if your unique ID is in cell `A2`, the result file is named
+`results.xlsx` with its `client_id` in column A and its `census_tract_geoid` in
+column G:
+
+```
+=XLOOKUP(A2, [results.xlsx]Sheet1!$A:$A, [results.xlsx]Sheet1!$G:$G, "Not found")
+```
+
+**If you have an older version of Excel (use `VLOOKUP`):**
+
+`VLOOKUP` requires the identifier column to be to the **left** of the tract
+column in the result file (it is, by default), and it counts columns starting
+from the identifier column. If the identifier is in column A and the
+`census_tract_geoid` is the 7th column across (A=1, B=2, … G=7), use:
+
+```
+=VLOOKUP(A2, [results.xlsx]Sheet1!$A:$H, 7, FALSE)
+```
+
+Replace `7` with the actual position of the `census_tract_geoid` column counted
+from your identifier column, and always keep `FALSE` at the end so Excel requires
+an exact identifier match.
+
+**Notes:**
+
+- Open the result file to confirm which column letter holds `census_tract_geoid`
+  and adjust the formula accordingly. The column position shifts depending on how
+  many address columns your file has.
+- Any identifier that appears in your master file but not in the result file will
+  show `Not found` (XLOOKUP) or `#N/A` (VLOOKUP). This simply means that record
+  was not in the file you processed.
+- Once the formula has filled the column, you may **copy the column and paste it
+  back as "Values"** (Home → Paste → Values) so the tracts remain even after the
+  result file is closed.
 
 ---
 
 ## First Run Note
 
 The first time you run this tool, it will automatically download the official U.S. Census Bureau tract boundary file (~55 MB). This only happens once — all future runs use the locally saved file. Progress will be shown while it downloads.
+
+---
+
+## Processing Large Files
+
+This tool is designed to process files of any size, from a few dozen records to
+several million. For larger files, it adjusts its behavior automatically so that
+you do not need to change the command. The relevant thresholds are documented
+below so that you can plan accordingly.
+
+### Automatic behavior by file size
+
+| Approximate file size | What the tool does | Action required |
+|---|---|---|
+| Up to 50,000 records | Processes the entire file in a single pass, held in memory. | None. |
+| More than 50,000 records | Automatically switches to **chunked processing**: the file is read and processed in blocks of 50,000 records at a time, so memory use stays bounded regardless of total size. Each block is written to a numbered part file, and the parts are combined into the final output at the end. | None. |
+| More than 100,000 records | In addition to chunking, the **free OpenStreetMap lookup is automatically disabled for the entire run** to avoid overloading a free public service (see the caution below). The Census matching steps still run in full. | None, unless you require the external lookup at this scale (see below). |
+| More than 1,048,576 records (output) | Because Microsoft Excel cannot open a file with more than 1,048,576 rows, chunked runs always write the combined output in **CSV** format. If you request an `.xlsx` output name, the tool writes a `.csv` file instead and reports the corrected name. | Open the result in a CSV-capable program (Excel can still open CSV files, subject to its row limit). |
+
+You do not have to enable any of this. If you prefer to control the block size
+manually, add `--chunk-size N` to the command (for example `--chunk-size 25000`).
+Use `--chunk-size 0` to force single-pass processing regardless of file size.
+
+### Resuming an interrupted run
+
+Large files can take a long time to process. If a run is interrupted (for
+example, the computer restarts or the network drops), simply run the **exact same
+command again**. The tool detects the part files that were already completed,
+skips them, and resumes from the first unfinished block. Completed work is never
+repeated and never duplicated in the final output.
+
+The numbered part files are kept in a folder next to your output file (named
+`<output>_parts`) until you confirm the final result looks correct. You may
+delete that folder afterward.
+
+### Time expectations
+
+Processing time is dominated by the U.S. Census geocoding service, not by your
+computer. As a rough guide, when the Census service is responding normally the
+tool processes on the order of **1,000 addresses every two minutes**. On that
+basis, a file of one million records may take on the order of **one to two full
+days** of continuous processing. Plan for an overnight or multi-day run, and rely
+on the resume capability rather than attempting to complete a very large file in
+one sitting.
+
+### Important caution regarding free services
+
+The optional external lookup uses **OpenStreetMap's Nominatim service**, which is
+provided free of charge for light, occasional use. Its usage policy permits at
+most one request per second and **expressly prohibits bulk or high-volume
+geocoding**. Submitting a large volume of requests may cause your access to be
+blocked and places an unfair burden on a shared public resource.
+
+To keep every run within acceptable use, the tool enforces two limits
+automatically:
+
+- The external lookup is **disabled for the whole run** when the input exceeds
+  **100,000 records** (`external_max_rows` in the configuration file).
+- Within any processing block, the external lookup is **skipped** if more than
+  **2,000 records** in that block remain unresolved after the Census steps
+  (`external_max_residual` in the configuration file).
+
+If you genuinely need to resolve a large residual of addresses that the Census
+system cannot find, please do **not** raise these limits against the free
+service. Instead, use a geocoding provider intended for volume use — for example
+the Esri ArcGIS World Geocoding service with a developer token (configurable via
+`external_provider: arcgis`), or a commercial geocoder — and contact JHFRC for
+guidance.
 
 ---
 
@@ -294,19 +449,24 @@ The output file includes your original columns plus the following:
 |---|---|
 | `cleaned_address` | The standardized address returned by the geocoder. Blank if the address could not be matched. |
 | `census_tract_geoid` | The 11-digit Census tract identifier (e.g., `47065001600`). Blank if the address could not be matched. |
-| `match_status` | One of: `Matched`, `Matched_Fallback`, `No_Match`, or `Rejected`. |
-| `error_reason` | Explanation of why a record was not matched, if applicable. |
+| `match_status` | How the address was matched (or why it was not). See the table below for every possible value. |
+| `error_reason` | Plain-language explanation for any address that was not matched. |
 
 ### Match status values
 
-| Value | Meaning |
-|---|---|
-| `Matched` | Address was geocoded and matched to a Census tract using the local boundary file. |
-| `Matched_CensusAPI_Backup` | Tract was assigned using the Census API directly, as a backup when the local boundary file returned no result. |
-| `Matched_Fallback` | Address required one-at-a-time Census geocoding (sweeping the Current and 2020 benchmarks, with a conservative street-normalization retry), then matched to a tract. |
-| `Matched_External` | Address was not in the Census address database and was resolved by the optional free external geocoder (OpenStreetMap/Nominatim or ArcGIS); its coordinates were then matched to a Census tract locally. |
-| `No_Match` | Address could not be geocoded after all methods were tried. |
-| `Rejected` | Record was missing a required ID or address and was not processed. |
+Any status beginning with `Matched` means the address **got a Census tract** —
+you do not need to do anything with those. The ones to look at are `No_Match`,
+`Tie`, and `Rejected`.
+
+| Value | Got a tract? | Meaning |
+|---|---|---|
+| `Matched` | Yes | Matched directly on the first, fastest pass. |
+| `Matched_Fallback` | Yes | Not found on the first pass; matched after the tool retried the address individually. |
+| `Matched_External` | Yes | Not in the Census address database; found with the free OpenStreetMap lookup, then placed in a Census tract. |
+| `Matched_CensusAPI_Backup` | Yes | A rare case where the tract was taken directly from the Census service. |
+| `Tie` | No | The address was **ambiguous** (more than one possible match). Add more detail (e.g. the full ZIP) and run again. |
+| `No_Match` | No | The address could not be found by any method. Check for typos, or the address may be too new to be in the databases. |
+| `Rejected` | No | The row was missing its ID or address and was skipped. Fill in the missing information. |
 
 ---
 
@@ -319,9 +479,9 @@ tool tries several methods so that hard-to-find addresses are not simply dropped
    system. This finds the large majority.
 2. For any it cannot find, it retries each one individually and applies a few
    safe spelling clean-ups (for example expanding "Pk" to "Pike").
-3. If you turn on the optional free lookup (see the Advanced options above), it
-   makes one more attempt using OpenStreetMap for addresses that are simply not
-   in the Census system yet (such as brand-new streets).
+3. For anything still not found, it automatically makes one more attempt using a
+   free OpenStreetMap lookup, which can find addresses that are simply not in the
+   Census system yet (such as brand-new streets).
 
 In a test of 1,000 real addresses, this matched about **99.5%** to a Census
 tract, compared with about 95% using the Census lookup alone. A small number of

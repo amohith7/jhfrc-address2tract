@@ -39,7 +39,12 @@ tract_source: cb500k
 # optimistic; real client-data yield will be lower. A tract-native commercial
 # geocoder (Geocodio, Smarty) would be simpler and higher-yield but needs a paid
 # key and is not used here.
-use_external_fallback: false
+#
+# Enabled by default so every run gets the highest match rate. The external
+# step only runs for addresses the Census cannot find (a small residual on most
+# files) and adds roughly one second per such address. Turn it off with the
+# --no-external-fallback flag or by setting this to false.
+use_external_fallback: true
 
 
 # Geocoder settings
@@ -69,6 +74,31 @@ geocoder:
 
   # ArcGIS World Geocoder token (only needed when external_provider is "arcgis").
   # arcgis_token: "YOUR_ARCGIS_TOKEN"
+
+  # Anti-abuse limits for the FREE external geocoder. These protect public
+  # services (and your IP) from being used like a bulk endpoint they are not.
+  #   external_max_residual : per-batch cap. If a single batch has more than this
+  #                           many addresses the Census geocoder could not
+  #                           resolve, the external step is skipped for that
+  #                           batch and a warning is logged.
+  #   external_max_rows     : file-wide cap. If the whole input has more than this
+  #                           many rows, the free external geocoder is disabled
+  #                           automatically for the entire run (the Census
+  #                           geocoder still runs). Use ArcGIS with a token or a
+  #                           paid geocoder to resolve the residual at that scale.
+  external_max_residual: 2000
+  external_max_rows: 100000
+
+
+# Large-file handling
+# -----------------------------------------------
+# Files with more rows than chunk_size are processed in resumable chunks so
+# memory stays bounded no matter how large the input is. Each chunk is written
+# to its own part file; if a run is interrupted, re-running resumes from the
+# first unfinished chunk. Leave unset to use the built-in default (50,000 rows).
+# Override on the command line with --chunk-size N, or --chunk-size 0 to force a
+# single pass.
+# chunk_size: 50000
 
 
 # Log detail level: DEBUG, INFO, WARNING, or ERROR
