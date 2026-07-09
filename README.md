@@ -41,9 +41,11 @@ Keep the file you run through this tool limited to the unique identifier and add
 
 ---
 
-## Installation (one-time setup)
+## Installation (first-time users only)
 
-Done once, the first time you set up the tool. After this, you only repeat [Running the Application](#running-the-application) for each file.
+**Already set up the tool before?** Skip this section and go straight to [Step 1](#running-the-application).
+
+This is a one-time setup, done the first time you use the tool. After completing it once, you only repeat Step 1–4 in [Running the Application](#running-the-application) for each new file.
 
 ### Prerequisites
 
@@ -55,18 +57,18 @@ python --version
 
 If you see a version like `Python 3.11.2`, you are ready. Otherwise, install it from [python.org](https://www.python.org/downloads/) (on Windows, check **"Add Python to PATH"** during installation).
 
-### 1) Download the project
+### Download the project
 
 On the project's GitHub page, click the green **Code** button → **Download ZIP**, then extract it (right-click → **Extract All** on Windows, or double-click on Mac). Note where the folder is saved.
 
-### 2) Open a terminal inside the project folder
+### Open a terminal inside the project folder
 
 - **Windows:** open the project folder in File Explorer, click the address bar, type `cmd`, and press **Enter**.
 - **Mac:** open **Terminal**, type `cd ` (with a trailing space), drag the project folder into the window, and press **Enter**.
 
 To confirm you are in the right place, type `dir` (Windows) or `ls` (Mac). You should see `main.py` and `requirements.txt`.
 
-### 3) Create a virtual environment (recommended)
+### Create a virtual environment (recommended)
 
 This keeps the tool's software separate from other programs. Type:
 
@@ -82,7 +84,7 @@ Then activate it:
 
 You will see `(.venv)` at the start of your prompt. Activate it again in each new terminal window.
 
-### 4) Install required packages
+### Install required packages
 
 ```
 pip install -r requirements.txt
@@ -170,11 +172,11 @@ After you run the tool, its result file lists each **unique identifier** with it
 
 **Before you begin — preserve leading zeros.** Census tract identifiers are text, not numbers, and some begin with a leading zero (for example Alabama tracts begin with `01`). To stop Excel dropping that zero, format the destination column as **Text** first (**Home → Number Format → Text**).
 
-**Steps:**
+**How to do it:**
 
-1. Open **both** files: your own file and the result file the tool created.
-2. In your file, click the empty cell in the first data row of the column where you want the Census tract (this example assumes row 2).
-3. Enter **one** of the formulas below, press **Enter**, and copy it down the column.
+- Open **both** files: your own file and the result file the tool created.
+- In your file, click the empty cell in the first data row of the column where you want the Census tract (this example assumes row 2).
+- Enter **one** of the formulas below, press **Enter**, and copy it down the column.
 
 **Microsoft 365 or Excel 2021+ (recommended — `XLOOKUP`):** if your unique ID is in `A2`, and the result file has `client_id` in column A and `census_tract_geoid` in column G:
 
