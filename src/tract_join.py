@@ -5,6 +5,8 @@ Downloads and manages the U.S. Census tract reference dataset.
 Performs spatial joins to assign a Census tract GEOID to each geocoded address.
 """
 
+from __future__ import annotations
+
 import shutil
 import zipfile
 import logging
@@ -17,27 +19,62 @@ from shapely.geometry import Point
 
 logger = logging.getLogger(__name__)
 
-# U.S. Census Bureau cartographic boundary file (national, ~500k generalized)
-# This URL follows the Census Bureau's standard naming convention.
+# U.S. Census Bureau cartographic boundary file (national, ~500k generalized).
+# Generalized geometry is small and fast but slightly simplified at boundaries.
 CENSUS_TRACT_URL = (
     "https://www2.census.gov/geo/tiger/GENZ2024/shp/cb_2024_us_tract_500k.zip"
 )
+# Full-resolution TIGER/Line tract files are published per state (no national
+# file). Format: tl_2024_<stateFIPS>_tract.zip. Larger, but exact boundaries.
+TIGER_TRACT_URL = (
+    "https://www2.census.gov/geo/tiger/TIGER2024/TRACT/tl_2024_{fips}_tract.zip"
+)
 TRACT_GPKG_NAME = "census_tracts.gpkg"
+TIGER_GPKG_NAME = "census_tracts_tiger.gpkg"
 TRACT_LAYER = "census_tracts"
 DEFAULT_REFERENCE_DIR = Path("data/reference")
 
 
-def get_tract_dataset(reference_dir: Path = DEFAULT_REFERENCE_DIR) -> gpd.GeoDataFrame:
+def get_tract_dataset(
+    reference_dir: Path = DEFAULT_REFERENCE_DIR,
+    source: str = "cb500k",
+    states: list | None = None,
+) -> gpd.GeoDataFrame:
     """
-    Return the Census tract GeoDataFrame, downloading and converting it if necessary.
+    Return the Census tract GeoDataFrame, downloading and converting if needed.
 
     The dataset is stored locally after the first download so subsequent runs
     do not require an internet connection.
+
+    Parameters
+    ----------
+    reference_dir : Directory for the cached reference dataset.
+    source        : "cb500k" (default, national generalized cartographic file)
+                    or "tiger" (full-resolution TIGER/Line, per-state).
+    states        : List of 2-digit state FIPS codes (required for "tiger";
+                    e.g. ["47","13","01","37"] for TN, GA, AL, NC).
     """
     reference_dir = Path(reference_dir)
     reference_dir.mkdir(parents=True, exist_ok=True)
-    gpkg_path = reference_dir / TRACT_GPKG_NAME
 
+    if source == "tiger":
+        if not states:
+            logger.warning(
+                "tract_source='tiger' requires tract_states; "
+                "falling back to the national cb500k file."
+            )
+        else:
+            gpkg_path = reference_dir / TIGER_GPKG_NAME
+            if not gpkg_path.exists():
+                _download_and_convert_tiger(reference_dir, gpkg_path, states)
+            else:
+                logger.info(f"TIGER/Line tract dataset found at: {gpkg_path}")
+            logger.info("Loading TIGER/Line tract dataset...")
+            tracts = gpd.read_file(gpkg_path, layer=TRACT_LAYER)
+            logger.info(f"Loaded {len(tracts):,} Census tracts (TIGER/Line).")
+            return tracts
+
+    gpkg_path = reference_dir / TRACT_GPKG_NAME
     if not gpkg_path.exists():
         _download_and_convert(reference_dir, gpkg_path)
     else:
@@ -47,6 +84,49 @@ def get_tract_dataset(reference_dir: Path = DEFAULT_REFERENCE_DIR) -> gpd.GeoDat
     tracts = gpd.read_file(gpkg_path, layer=TRACT_LAYER)
     logger.info(f"Loaded {len(tracts):,} Census tracts.")
     return tracts
+
+
+def _download_and_convert_tiger(
+    reference_dir: Path, gpkg_path: Path, states: list
+) -> None:
+    """Download full-resolution TIGER/Line tract files for the given state FIPS
+    codes and merge them into a single GeoPackage."""
+    import pandas as pd
+
+    print("\nFull-resolution TIGER/Line tract dataset not found locally.")
+    print(f"Downloading tract files for states: {', '.join(states)}")
+
+    frames = []
+    for fips in states:
+        fips = str(fips).zfill(2)
+        url = TIGER_TRACT_URL.format(fips=fips)
+        zip_path = reference_dir / f"tl_2024_{fips}_tract.zip"
+        extract_dir = reference_dir / f"tl_2024_{fips}_tract"
+        try:
+            with requests.get(url, stream=True, timeout=300) as r:
+                r.raise_for_status()
+                with open(zip_path, "wb") as f:
+                    for chunk in r.iter_content(chunk_size=1024 * 1024):
+                        f.write(chunk)
+            with zipfile.ZipFile(zip_path, "r") as z:
+                z.extractall(extract_dir)
+            shp = next(iter(extract_dir.glob("*.shp")), None)
+            if shp is None:
+                raise RuntimeError(f"No shapefile for state {fips}")
+            frames.append(gpd.read_file(shp))
+            print(f"  State {fips}: loaded.")
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to download/parse TIGER tract file for state {fips}.\n"
+                f"Details: {e}"
+            ) from e
+        finally:
+            zip_path.unlink(missing_ok=True)
+            shutil.rmtree(extract_dir, ignore_errors=True)
+
+    merged = gpd.GeoDataFrame(pd.concat(frames, ignore_index=True), crs=frames[0].crs)
+    merged.to_file(gpkg_path, layer=TRACT_LAYER, driver="GPKG")
+    print(f"  TIGER/Line tract dataset saved to: {gpkg_path}\n")
 
 
 def _download_and_convert(reference_dir: Path, gpkg_path: Path) -> None:
@@ -106,8 +186,7 @@ def _download_and_convert(reference_dir: Path, gpkg_path: Path) -> None:
 
 
 def join_points_to_tracts(
-    geo_df: pd.DataFrame,
-    tracts: gpd.GeoDataFrame,
+    geo_df: pd.DataFrame, tracts: gpd.GeoDataFrame,
 ) -> pd.DataFrame:
     """
     Assign a Census tract GEOID to each geocoded record via spatial join.
@@ -169,9 +248,16 @@ def join_points_to_tracts(
     valid_points = points_gdf[valid_mask].copy()
     invalid_points = points_gdf[~valid_mask].copy()
 
-    # Spatial join
+    # Spatial join. Use "intersects" rather than "within" so a point that lands
+    # exactly on a (generalized) tract boundary still gets assigned instead of
+    # falling through to a null tract.
     if len(valid_points) > 0:
-        joined = gpd.sjoin(valid_points, tracts_slim, how="left", predicate="within")
+        joined = gpd.sjoin(
+            valid_points, tracts_slim, how="left", predicate="intersects"
+        )
+        # "intersects" can return two tracts for a point on a shared boundary;
+        # keep the first match per original point so row counts are preserved.
+        joined = joined[~joined.index.duplicated(keep="first")]
         joined = joined.rename(columns={"GEOID": "census_tract_geoid"})
         joined = joined.drop(columns=["geometry", "index_right"], errors="ignore")
     else:
@@ -182,8 +268,10 @@ def join_points_to_tracts(
     invalid_points["census_tract_geoid"] = None
 
     combined = pd.concat(
-        [pd.DataFrame(joined).reset_index(drop=True),
-         pd.DataFrame(invalid_points).reset_index(drop=True)],
+        [
+            pd.DataFrame(joined).reset_index(drop=True),
+            pd.DataFrame(invalid_points).reset_index(drop=True),
+        ],
         ignore_index=True,
     )
 
