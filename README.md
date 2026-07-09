@@ -214,48 +214,69 @@ When it finishes, you are ready to run the tool.
 
 ## Running the Application
 
-Place your input file in the `data/input/` folder, then run one of the following commands from the project folder.
+Follow these three steps.
 
-### Example 1: Full address column
+### Step 1: Put your file in the input folder
 
-```bash
-python main.py \
-  --input data/input/clients.xlsx \
-  --output data/output/clients_with_tracts.xlsx \
-  --id-column client_id \
-  --address-column full_address
+Copy your Excel or CSV file into the `data/input/` folder inside the project.
+For example, `data/input/clients.xlsx`.
+
+### Step 2: Run one command
+
+In your terminal (opened inside the project folder), type **one** of the
+commands below and press **Enter**. Type it all on a single line.
+
+**If your file has ONE column that holds the whole address** (for example a
+column named `full_address`):
+
+```
+python main.py --input data/input/clients.xlsx --output data/output/results.xlsx --id-column client_id --address-column full_address
 ```
 
-### Example 2: Separate address fields
+**If your file has SEPARATE columns for street, city, state, and ZIP:**
 
-```bash
-python main.py \
-  --input data/input/clients.xlsx \
-  --output data/output/clients_with_tracts.xlsx \
-  --id-column client_id \
-  --street-column street \
-  --city-column city \
-  --state-column state \
-  --zip-column zip
+```
+python main.py --input data/input/clients.xlsx --output data/output/results.xlsx --id-column client_id --street-column street --city-column city --state-column state --zip-column zip
 ```
 
-### All available options
+Change the names in the command to match your file:
+
+- `data/input/clients.xlsx` — the name of **your** input file.
+- `data/output/results.xlsx` — the name you want for the **result** file.
+- `client_id` — the name of the column that holds your unique ID for each row.
+- `full_address` (or `street` / `city` / `state` / `zip`) — the names of your
+  address column(s).
+
+That is all you need. You do not have to set anything else.
+
+### Step 3: Get your results
+
+When it finishes, open the result file (for example `data/output/results.xlsx`).
+It contains your original columns plus the Census tract for each address. See
+[Understanding the Output Columns](#understanding-the-output-columns) below.
+
+### What to expect while it runs
+
+- The **first run** downloads the official Census map file (about 55 MB). This
+  happens only once and may take a minute or two.
+- After that, a typical file of 1,000 addresses finishes in **about 2 minutes**.
+- You will see progress messages in the terminal, then a short summary showing
+  how many addresses were matched.
+
+<details>
+<summary>Advanced options (most people do not need these)</summary>
 
 | Option | Description |
 |---|---|
-| `--input` | Path to your input file (required) |
-| `--output` | Path for the output file (required) |
-| `--id-column` | Name of your unique ID column (required) |
-| `--address-column` | Name of the full address column |
-| `--street-column` | Name of the street address column |
-| `--city-column` | Name of the city column |
-| `--state-column` | Name of the state column |
-| `--zip-column` | Name of the ZIP code column |
-| `--sheet-name` | Excel sheet name (if the workbook has multiple sheets) |
-| `--use-fallback` | Enable fallback geocoding for unmatched records |
-| `--no-fallback` | Disable fallback geocoding |
-| `--tract-dataset` | Path to an existing Census tract GeoPackage |
-| `--config` | Path to the config file (default: `config/config.yaml`) |
+| `--sheet-name` | The Excel sheet to read, if your workbook has more than one sheet. |
+| `--no-fallback` | Turn off the slower one-at-a-time retry for hard addresses. |
+| `--config` | Use a different settings file (default: `config/config.yaml`). |
+
+To try to match the small number of addresses the Census cannot find (using a
+free OpenStreetMap lookup), open `config/config.yaml` and change
+`use_external_fallback` to `true`. This is optional and makes runs slower.
+
+</details>
 
 ---
 
@@ -282,9 +303,30 @@ The output file includes your original columns plus the following:
 |---|---|
 | `Matched` | Address was geocoded and matched to a Census tract using the local boundary file. |
 | `Matched_CensusAPI_Backup` | Tract was assigned using the Census API directly, as a backup when the local boundary file returned no result. |
-| `Matched_Fallback` | Address required one-at-a-time geocoding as a fallback, then matched to a tract. |
+| `Matched_Fallback` | Address required one-at-a-time Census geocoding (sweeping the Current and 2020 benchmarks, with a conservative street-normalization retry), then matched to a tract. |
+| `Matched_External` | Address was not in the Census address database and was resolved by the optional free external geocoder (OpenStreetMap/Nominatim or ArcGIS); its coordinates were then matched to a Census tract locally. |
 | `No_Match` | Address could not be geocoded after all methods were tried. |
 | `Rejected` | Record was missing a required ID or address and was not processed. |
+
+---
+
+## How addresses are matched
+
+You do not need to do anything for this to work — it is automatic. In short, the
+tool tries several methods so that hard-to-find addresses are not simply dropped:
+
+1. It first looks up all addresses against the official U.S. Census address
+   system. This finds the large majority.
+2. For any it cannot find, it retries each one individually and applies a few
+   safe spelling clean-ups (for example expanding "Pk" to "Pike").
+3. If you turn on the optional free lookup (see the Advanced options above), it
+   makes one more attempt using OpenStreetMap for addresses that are simply not
+   in the Census system yet (such as brand-new streets).
+
+In a test of 1,000 real addresses, this matched about **99.5%** to a Census
+tract, compared with about 95% using the Census lookup alone. A small number of
+addresses (poorly formatted or very new) may still not match; those are marked
+`No_Match` in the results so you can review them.
 
 ---
 
