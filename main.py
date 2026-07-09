@@ -16,6 +16,7 @@ Usage examples:
 """
 
 import sys
+import json
 import logging
 from pathlib import Path
 
@@ -27,11 +28,19 @@ import argparse
 import pandas as pd
 import yaml
 
+from collections import defaultdict
+
 from phi_validator import validate_no_phi
 from geocode import geocode_batch, geocode_fallback, normalize_zip
 from geocode_external import geocode_external
 from tract_join import get_tract_dataset, join_points_to_tracts
-from utils.io import read_input, write_output
+from utils.io import (
+    read_input,
+    write_output,
+    scan_input,
+    iter_input_chunks,
+    concat_csv_parts,
+)
 
 
 def _setup_logging(level: str = "INFO") -> None:
@@ -112,6 +121,30 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Disable Census API fallback geocoding.",
     )
     parser.add_argument(
+        "--use-external-fallback",
+        action="store_true",
+        default=None,
+        help=(
+            "Also try a free external geocoder (OpenStreetMap) for addresses "
+            "the Census cannot find. Slower; recovers hard-to-find addresses."
+        ),
+    )
+    parser.add_argument(
+        "--no-external-fallback",
+        action="store_true",
+        help="Disable the external geocoder fallback.",
+    )
+    parser.add_argument(
+        "--chunk-size",
+        type=int,
+        default=None,
+        help=(
+            "Rows to process per chunk for large files. The tool decides "
+            "automatically based on file size; use this only to override. "
+            "0 forces single-pass (no chunking)."
+        ),
+    )
+    parser.add_argument(
         "--sheet-name",
         help="Excel sheet name to read (if the workbook has multiple sheets).",
     )
@@ -153,6 +186,12 @@ def _print_summary(
     unmatched: int,
     rejected: int,
 ) -> None:
+    total_matched = (
+        matched_gpkg + matched_api_backup + matched_fallback + matched_external
+    )
+    match_pct = (100.0 * total_matched / total) if total else 0.0
+    unmatched_pct = (100.0 * unmatched / total) if total else 0.0
+
     print()
     print("=" * 56)
     print("  PROCESSING SUMMARY")
@@ -164,82 +203,64 @@ def _print_summary(
     print(f"  Matched — External geocoder   : {matched_external:,}")
     print(f"  Unmatched                     : {unmatched:,}")
     print(f"  Rejected (missing data)       : {rejected:,}")
+    print("-" * 56)
+    print(f"  Matched total                 : {total_matched:,}  ({match_pct:.1f}%)")
+    print(f"  Unmatched                     : {unmatched:,}  ({unmatched_pct:.1f}%)")
     print("=" * 56)
+    if unmatched_pct > 10.0:
+        print()
+        print(
+            f"  NOTE: {unmatched_pct:.1f}% of addresses were not matched. If this\n"
+            "  seems high, please report it to JHFRC (mohith-addepalli@utc.edu)\n"
+            "  along with a few example addresses so we can help."
+        )
     print()
 
 
-def main() -> None:
-    parser = _build_parser()
-    args = parser.parse_args()
+# Default row count above which chunked, resumable processing turns on
+# automatically. Files at or below this size are processed in a single pass.
+DEFAULT_CHUNK_THRESHOLD = 50000
 
-    config = _load_config(args.config)
-    _setup_logging(config.get("log_level", "INFO"))
-    logger = logging.getLogger(__name__)
 
-    # Determine fallback setting (CLI flags override config)
-    use_fallback = config.get("use_fallback", True)
-    if args.no_fallback:
-        use_fallback = False
-    elif args.use_fallback:
-        use_fallback = True
+def _tally(status: pd.Series) -> dict:
+    """Count match_status values for the run summary."""
+    s = status.fillna("")
+    return {
+        "total": int(len(s)),
+        "rejected": int((s == "Rejected").sum()),
+        "matched_gpkg": int((s == "Matched").sum()),
+        "matched_api_backup": int((s == "Matched_CensusAPI_Backup").sum()),
+        "matched_fallback": int((s == "Matched_Fallback").sum()),
+        "matched_external": int((s == "Matched_External").sum()),
+        "unmatched": int(s.isin(["No_Match", "Tie"]).sum()),
+    }
 
-    # Determine reference data directory
-    if args.tract_dataset:
-        reference_dir = Path(args.tract_dataset).parent
-    else:
-        reference_dir = Path(config.get("reference_dir", "data/reference"))
 
-    print()
-    print("=== JHFRC Address to Census Tract Converter ===")
-    print()
+def _process_frame(
+    df: pd.DataFrame,
+    tracts,
+    args,
+    config: dict,
+    use_fallback: bool,
+    use_external_fallback: bool,
+    external_budget: list,
+    logger: logging.Logger,
+) -> pd.DataFrame:
+    """
+    Run the full geocoding + tract-assignment pipeline on one DataFrame and
+    return the assembled output DataFrame.
 
-    # ------------------------------------------------------------------
-    # 1. Read input file
-    # ------------------------------------------------------------------
-    logger.info(f"Reading input file: {args.input}")
-    try:
-        df = read_input(args.input, sheet_name=args.sheet_name)
-    except Exception as e:
-        print(f"\nError reading input file:\n  {e}")
-        sys.exit(1)
+    This is called once for a single-pass run, or once per chunk for a large,
+    chunked run. Column validation, PHI screening, and the global unique-ID
+    check are performed by the caller (main) before this runs, so this function
+    assumes IDs are globally unique and required columns are present.
 
-    logger.info(f"Loaded {len(df):,} rows.")
-
-    # ------------------------------------------------------------------
-    # 2. Validate that required columns exist
-    # ------------------------------------------------------------------
-    required_cols = [args.id_column]
-    if args.address_column:
-        required_cols.append(args.address_column)
-    else:
-        for col in [
-            args.street_column,
-            args.city_column,
-            args.state_column,
-            args.zip_column,
-        ]:
-            if col:
-                required_cols.append(col)
-
-    missing = [c for c in required_cols if c not in df.columns]
-    if missing:
-        print("\nError: The following columns were not found in the input file:")
-        for c in missing:
-            print(f"  - {c}")
-        print(f"\nColumns found in the file: {list(df.columns)}")
-        sys.exit(1)
-
-    # ------------------------------------------------------------------
-    # 3. PHI / sensitive data check
-    # ------------------------------------------------------------------
-    logger.info("Checking for sensitive data columns...")
-    try:
-        validate_no_phi(list(df.columns))
-    except ValueError as e:
-        print(str(e))
-        sys.exit(1)
-    logger.info("No sensitive columns detected. Proceeding.")
-
+    external_budget is a single-element mutable list holding the number of
+    addresses still permitted to be sent to the free external geocoder across
+    the WHOLE run. It is shared across every chunk so the total number of
+    external requests can never exceed the configured limit, no matter how many
+    chunks the file is split into. This function decrements it as it consumes.
+    """
     # ------------------------------------------------------------------
     # 4. Build a single address column (combine fields if needed)
     # ------------------------------------------------------------------
@@ -247,7 +268,6 @@ def main() -> None:
     if args.address_column:
         df[ADDR_COL] = df[args.address_column].astype(str).str.strip()
     else:
-        logger.info("Combining address fields into a single address column...")
         df[ADDR_COL] = df.apply(
             lambda row: _combine_address_fields(
                 row,
@@ -274,248 +294,264 @@ def main() -> None:
     if rejected_count > 0:
         logger.info(f"{rejected_count} row(s) rejected due to missing ID or address.")
 
-    # The pipeline merges and writes results keyed on the ID column, so IDs must
-    # be unique. Duplicate IDs would explode the merge and cross-contaminate
-    # rows (one record's coordinates written onto another). Fail fast and clearly
-    # rather than silently corrupt the output.
-    dup_ids = valid_df[args.id_column].astype(str)
-    dup_mask = dup_ids.duplicated(keep=False)
-    if dup_mask.any():
-        examples = sorted(dup_ids[dup_mask].unique())[:10]
-        print(
-            f"\nError: the ID column '{args.id_column}' contains duplicate "
-            f"values ({int(dup_mask.sum())} row(s)).\n"
-            "Each row must have a unique identifier so results can be matched "
-            "back correctly.\n"
-            f"Example duplicate IDs: {examples}"
-        )
-        sys.exit(1)
-
     # ------------------------------------------------------------------
-    # 6. Geocoding — Census Geography Batch API (address → coordinates)
-    #    The geography endpoint also returns a tract GEOID from the Census
-    #    API, stored as census_api_geoid and used only as backup below.
+    # 6-9b. Geocoding + tract assignment (only when there are valid rows)
     # ------------------------------------------------------------------
-    logger.info(
-        f"Geocoding {len(valid_df):,} records via Census Geography Batch API..."
-    )
-
-    valid_df[args.id_column] = valid_df[args.id_column].astype(str)
-
-    # Route parsed address components to their own Census batch fields. When
-    # separate street/city/state/zip columns are provided, sending each to its
-    # own field is more reliable than one concatenated blob in the street field.
-    if args.address_column:
-        street_series = valid_df[ADDR_COL]
-        city_series = state_series = zip_series = None
-    else:
-        street_series = (
-            valid_df[args.street_column] if args.street_column else valid_df[ADDR_COL]
-        )
-        city_series = valid_df[args.city_column] if args.city_column else None
-        state_series = valid_df[args.state_column] if args.state_column else None
-        # Normalize ZIPs so a float-parsed value (37403.0) or a leading-zero
-        # loss (07030 -> 7030) cannot degrade the batch match.
-        zip_series = (
-            valid_df[args.zip_column].map(normalize_zip) if args.zip_column else None
-        )
-
-    geo_results = geocode_batch(
-        unique_ids=valid_df[args.id_column],
-        street=street_series,
-        city=city_series,
-        state=state_series,
-        zip_code=zip_series,
-        batch_size=config.get("geocoder", {}).get("batch_size", 1000),
-        timeout=config.get("geocoder", {}).get("batch_timeout", 120),
-    )
-    geo_results["unique_id"] = geo_results["unique_id"].astype(str)
-
-    valid_df = valid_df.merge(
-        geo_results[
-            [
-                "unique_id",
-                "latitude",
-                "longitude",
-                "match_status",
-                "matched_address",
-                "census_api_geoid",
-            ]
-        ],
-        left_on=args.id_column,
-        right_on="unique_id",
-        how="left",
-    ).drop(columns=["unique_id"])
-
-    # ------------------------------------------------------------------
-    # 7. PRIMARY tract assignment — GeoPackage spatial join (local)
-    #    All records with coordinates are joined against the local
-    #    GeoPackage. This is the authoritative source for census_tract_geoid.
-    # ------------------------------------------------------------------
-    try:
-        tracts = get_tract_dataset(
-            reference_dir,
-            source=config.get("tract_source", "cb500k"),
-            states=config.get("tract_states"),
-        )
-    except Exception as e:
-        print(f"\nError loading Census tract dataset:\n  {e}")
-        sys.exit(1)
-
-    logger.info("Primary tract assignment: GeoPackage spatial join...")
-    valid_df = join_points_to_tracts(valid_df, tracts)
-
-    # ------------------------------------------------------------------
-    # 8. BACKUP tract assignment — Census API GEOID
-    #    For records where the GeoPackage spatial join returned no tract
-    #    (rare — e.g. coordinates near a tract boundary), use the GEOID
-    #    returned directly by the Census Geography batch API as backup.
-    # ------------------------------------------------------------------
-    gpkg_null = valid_df["census_tract_geoid"].isna()
-    api_geoid_available = valid_df.get("census_api_geoid", pd.Series(dtype=str)).notna()
-    has_coords = valid_df["match_status"].isin(["Matched", "Matched_Fallback"])
-
-    use_api_backup = gpkg_null & api_geoid_available & has_coords
-    backup_count = int(use_api_backup.sum())
-
-    if backup_count > 0:
+    if len(valid_df) > 0:
+        # 6. Geocoding — Census Geography Batch API (address → coordinates).
+        #    The geography endpoint also returns a tract GEOID from the Census
+        #    API, stored as census_api_geoid and used only as backup below.
         logger.info(
-            f"Census API GEOID backup applied to {backup_count} record(s) "
-            "where GeoPackage spatial join returned no tract."
+            f"Geocoding {len(valid_df):,} records via Census Geography Batch API..."
         )
-        valid_df.loc[use_api_backup, "census_tract_geoid"] = valid_df.loc[
-            use_api_backup, "census_api_geoid"
-        ]
-        valid_df.loc[use_api_backup, "match_status"] = "Matched_CensusAPI_Backup"
 
-    valid_df = valid_df.drop(columns=["census_api_geoid"], errors="ignore")
+        valid_df[args.id_column] = valid_df[args.id_column].astype(str)
 
-    # ------------------------------------------------------------------
-    # 9. FALLBACK geocoding — Census single-address API
-    #    Only for records the batch geocoder could not geocode at all.
-    #    After getting coordinates, GeoPackage spatial join runs again.
-    # ------------------------------------------------------------------
-    fallback_count = 0
-    if use_fallback:
-        # Both true No_Match and ambiguous Tie results are recoverable by the
-        # single-address endpoint, so route both into the fallback.
-        unmatched_mask = valid_df["match_status"].isin(["No_Match", "Tie"])
-        unmatched_for_fallback = valid_df[unmatched_mask].copy()
+        # Route parsed address components to their own Census batch fields. When
+        # separate street/city/state/zip columns are provided, sending each to
+        # its own field is more reliable than one concatenated blob.
+        if args.address_column:
+            street_series = valid_df[ADDR_COL]
+            city_series = state_series = zip_series = None
+        else:
+            street_series = (
+                valid_df[args.street_column]
+                if args.street_column
+                else valid_df[ADDR_COL]
+            )
+            city_series = valid_df[args.city_column] if args.city_column else None
+            state_series = valid_df[args.state_column] if args.state_column else None
+            # Normalize ZIPs so a float-parsed value (37403.0) or a leading-zero
+            # loss (07030 -> 7030) cannot degrade the batch match.
+            zip_series = (
+                valid_df[args.zip_column].map(normalize_zip)
+                if args.zip_column
+                else None
+            )
 
-        if len(unmatched_for_fallback) > 0:
+        geo_results = geocode_batch(
+            unique_ids=valid_df[args.id_column],
+            street=street_series,
+            city=city_series,
+            state=state_series,
+            zip_code=zip_series,
+            batch_size=config.get("geocoder", {}).get("batch_size", 1000),
+            timeout=config.get("geocoder", {}).get("batch_timeout", 120),
+        )
+        geo_results["unique_id"] = geo_results["unique_id"].astype(str)
+
+        valid_df = valid_df.merge(
+            geo_results[
+                [
+                    "unique_id",
+                    "latitude",
+                    "longitude",
+                    "match_status",
+                    "matched_address",
+                    "census_api_geoid",
+                ]
+            ],
+            left_on=args.id_column,
+            right_on="unique_id",
+            how="left",
+        ).drop(columns=["unique_id"])
+
+        # 7. PRIMARY tract assignment — GeoPackage spatial join (local).
+        #    This is the authoritative source for census_tract_geoid.
+        logger.info("Primary tract assignment: GeoPackage spatial join...")
+        valid_df = join_points_to_tracts(valid_df, tracts)
+
+        # 8. BACKUP tract assignment — Census API GEOID for records where the
+        #    GeoPackage spatial join returned no tract (rare; e.g. coordinates
+        #    on a tract boundary).
+        gpkg_null = valid_df["census_tract_geoid"].isna()
+        api_geoid_available = valid_df.get(
+            "census_api_geoid", pd.Series(dtype=str)
+        ).notna()
+        has_coords = valid_df["match_status"].isin(["Matched", "Matched_Fallback"])
+
+        use_api_backup = gpkg_null & api_geoid_available & has_coords
+        backup_count = int(use_api_backup.sum())
+
+        if backup_count > 0:
             logger.info(
-                f"Fallback: Census single-address API for "
-                f"{len(unmatched_for_fallback)} unmatched/tie record(s)..."
+                f"Census API GEOID backup applied to {backup_count} record(s) "
+                "where GeoPackage spatial join returned no tract."
             )
-            fallback_results = geocode_fallback(
-                unmatched_df=unmatched_for_fallback,
-                address_col=ADDR_COL,
-                id_col=args.id_column,
-                delay=config.get("geocoder", {}).get("fallback_delay", 0.5),
-            )
-            fallback_results["unique_id"] = fallback_results["unique_id"].astype(str)
+            valid_df.loc[use_api_backup, "census_tract_geoid"] = valid_df.loc[
+                use_api_backup, "census_api_geoid"
+            ]
+            valid_df.loc[use_api_backup, "match_status"] = "Matched_CensusAPI_Backup"
 
-            for _, fb_row in fallback_results.iterrows():
-                uid = str(fb_row["unique_id"])
-                if fb_row["match_status"] == "Matched_Fallback":
-                    mask = valid_df[args.id_column] == uid
-                    valid_df.loc[mask, "latitude"] = fb_row["latitude"]
-                    valid_df.loc[mask, "longitude"] = fb_row["longitude"]
-                    valid_df.loc[mask, "match_status"] = "Matched_Fallback"
-                    valid_df.loc[mask, "matched_address"] = fb_row["matched_address"]
-                    valid_df.loc[mask, "census_api_geoid"] = fb_row.get(
-                        "census_api_geoid"
-                    )
-                    fallback_count += 1
+        valid_df = valid_df.drop(columns=["census_api_geoid"], errors="ignore")
 
-            # Re-run GeoPackage spatial join for newly geocoded fallback records
-            if fallback_count > 0:
+        # 9. FALLBACK geocoding — Census single-address API, only for records
+        #    the batch geocoder could not geocode at all. After getting
+        #    coordinates, the GeoPackage spatial join runs again.
+        fallback_count = 0
+        if use_fallback:
+            # Both true No_Match and ambiguous Tie results are recoverable by
+            # the single-address endpoint, so route both into the fallback.
+            unmatched_mask = valid_df["match_status"].isin(["No_Match", "Tie"])
+            unmatched_for_fallback = valid_df[unmatched_mask].copy()
+
+            if len(unmatched_for_fallback) > 0:
                 logger.info(
-                    "Re-running GeoPackage spatial join for fallback-geocoded records..."
+                    f"Fallback: Census single-address API for "
+                    f"{len(unmatched_for_fallback)} unmatched/tie record(s)..."
                 )
-                fallback_mask = valid_df["match_status"] == "Matched_Fallback"
-                fallback_rows = valid_df[fallback_mask].copy()
-                fallback_rows = join_points_to_tracts(fallback_rows, tracts)
-
-                # Apply Census API backup for fallback rows where GeoPackage still null
-                fb_gpkg_null = fallback_rows["census_tract_geoid"].isna()
-                fb_api_available = fallback_rows.get(
-                    "census_api_geoid", pd.Series(dtype=str)
-                ).notna()
-                fb_use_backup = fb_gpkg_null & fb_api_available
-                if fb_use_backup.any():
-                    fallback_rows.loc[
-                        fb_use_backup, "census_tract_geoid"
-                    ] = fallback_rows.loc[fb_use_backup, "census_api_geoid"]
-                    fallback_rows.loc[
-                        fb_use_backup, "match_status"
-                    ] = "Matched_CensusAPI_Backup"
-
-                fallback_rows = fallback_rows.drop(
-                    columns=["census_api_geoid"], errors="ignore"
+                fallback_results = geocode_fallback(
+                    unmatched_df=unmatched_for_fallback,
+                    address_col=ADDR_COL,
+                    id_col=args.id_column,
+                    delay=config.get("geocoder", {}).get("fallback_delay", 0.5),
                 )
-                valid_df = valid_df.drop(columns=["census_api_geoid"], errors="ignore")
+                fallback_results["unique_id"] = fallback_results["unique_id"].astype(
+                    str
+                )
 
-                # Merge fallback spatial join results back
-                valid_df.loc[fallback_mask, "census_tract_geoid"] = fallback_rows[
-                    "census_tract_geoid"
-                ].values
-                valid_df.loc[fallback_mask, "match_status"] = fallback_rows[
-                    "match_status"
-                ].values
+                for _, fb_row in fallback_results.iterrows():
+                    uid = str(fb_row["unique_id"])
+                    if fb_row["match_status"] == "Matched_Fallback":
+                        mask = valid_df[args.id_column] == uid
+                        valid_df.loc[mask, "latitude"] = fb_row["latitude"]
+                        valid_df.loc[mask, "longitude"] = fb_row["longitude"]
+                        valid_df.loc[mask, "match_status"] = "Matched_Fallback"
+                        valid_df.loc[mask, "matched_address"] = fb_row[
+                            "matched_address"
+                        ]
+                        valid_df.loc[mask, "census_api_geoid"] = fb_row.get(
+                            "census_api_geoid"
+                        )
+                        fallback_count += 1
 
-    valid_df = valid_df.drop(columns=["census_api_geoid"], errors="ignore")
+                # Re-run spatial join for newly geocoded fallback records
+                if fallback_count > 0:
+                    logger.info(
+                        "Re-running GeoPackage spatial join for "
+                        "fallback-geocoded records..."
+                    )
+                    fallback_mask = valid_df["match_status"] == "Matched_Fallback"
+                    fallback_rows = valid_df[fallback_mask].copy()
+                    fallback_rows = join_points_to_tracts(fallback_rows, tracts)
 
-    # ------------------------------------------------------------------
-    # 9b. EXTERNAL geocoder fallback — free non-Census provider
-    #     For the residual the Census geocoder cannot resolve (addresses not in
-    #     the Census TIGER address-range file). Returns coordinates only; the
-    #     tract is still assigned by the local GeoPackage spatial join, so the
-    #     tract geometry stays authoritative. Results are labeled distinctly.
-    # ------------------------------------------------------------------
-    if config.get("use_external_fallback", False):
-        ext_mask = valid_df["match_status"].isin(["No_Match", "Tie"])
-        ext_unmatched = valid_df[ext_mask].copy()
+                    # Census API backup for fallback rows still null after join
+                    fb_gpkg_null = fallback_rows["census_tract_geoid"].isna()
+                    fb_api_available = fallback_rows.get(
+                        "census_api_geoid", pd.Series(dtype=str)
+                    ).notna()
+                    fb_use_backup = fb_gpkg_null & fb_api_available
+                    if fb_use_backup.any():
+                        fallback_rows.loc[
+                            fb_use_backup, "census_tract_geoid"
+                        ] = fallback_rows.loc[fb_use_backup, "census_api_geoid"]
+                        fallback_rows.loc[
+                            fb_use_backup, "match_status"
+                        ] = "Matched_CensusAPI_Backup"
 
-        if len(ext_unmatched) > 0:
-            geo_cfg = config.get("geocoder", {})
-            provider = geo_cfg.get("external_provider", "nominatim")
-            logger.info(
-                f"External fallback ({provider}): {len(ext_unmatched)} "
-                "residual record(s)..."
-            )
-            ext_results = geocode_external(
-                unmatched_df=ext_unmatched,
-                address_col=ADDR_COL,
-                id_col=args.id_column,
-                provider=provider,
-                user_agent=geo_cfg.get(
-                    "external_user_agent", "jhfrc-address2tract/1.0 (research use)"
-                ),
-                arcgis_token=geo_cfg.get("arcgis_token"),
-                delay=geo_cfg.get("external_delay", 1.1),
-            )
-            ext_results["unique_id"] = ext_results["unique_id"].astype(str)
+                    fallback_rows = fallback_rows.drop(
+                        columns=["census_api_geoid"], errors="ignore"
+                    )
+                    valid_df = valid_df.drop(
+                        columns=["census_api_geoid"], errors="ignore"
+                    )
 
-            external_count = 0
-            for _, ex_row in ext_results.iterrows():
-                if ex_row["match_status"] == "Matched_External":
-                    uid = str(ex_row["unique_id"])
-                    mask = valid_df[args.id_column] == uid
-                    valid_df.loc[mask, "latitude"] = ex_row["latitude"]
-                    valid_df.loc[mask, "longitude"] = ex_row["longitude"]
-                    valid_df.loc[mask, "match_status"] = "Matched_External"
-                    external_count += 1
+                    # Merge fallback spatial join results back
+                    valid_df.loc[fallback_mask, "census_tract_geoid"] = fallback_rows[
+                        "census_tract_geoid"
+                    ].values
+                    valid_df.loc[fallback_mask, "match_status"] = fallback_rows[
+                        "match_status"
+                    ].values
 
-            # Assign tracts for the externally geocoded records via local join.
-            if external_count > 0:
-                logger.info("Spatial join for externally geocoded records...")
-                ext_join_mask = valid_df["match_status"] == "Matched_External"
-                ext_rows = valid_df[ext_join_mask].copy()
-                ext_rows = join_points_to_tracts(ext_rows, tracts)
-                valid_df.loc[ext_join_mask, "census_tract_geoid"] = ext_rows[
-                    "census_tract_geoid"
-                ].values
+        valid_df = valid_df.drop(columns=["census_api_geoid"], errors="ignore")
+
+        # 9b. EXTERNAL geocoder fallback — free non-Census provider for the
+        #     residual the Census geocoder cannot resolve (addresses not in the
+        #     Census TIGER address-range file). Returns coordinates only; the
+        #     tract is still assigned by the local GeoPackage spatial join, so
+        #     the tract geometry stays authoritative.
+        if use_external_fallback:
+            ext_mask = valid_df["match_status"].isin(["No_Match", "Tie"])
+            ext_unmatched = valid_df[ext_mask].copy()
+
+            # Enforce the run-wide external budget. external_budget[0] is the
+            # number of addresses still permitted to reach the free geocoder
+            # across ALL chunks; it is shared, so many small chunks cannot add
+            # up to more than the configured total.
+            remaining = external_budget[0]
+            if remaining <= 0 and len(ext_unmatched) > 0:
+                logger.warning(
+                    f"External geocoder skipped: the run-wide budget of external "
+                    "lookups is exhausted. Remaining unresolved addresses are "
+                    "left as No_Match. Use ArcGIS with a token or a paid geocoder "
+                    "to resolve a residual this large."
+                )
+            elif len(ext_unmatched) > remaining:
+                # Only send up to the remaining budget; leave the rest as-is so a
+                # free public geocoder is never over-used.
+                logger.warning(
+                    f"External geocoder budget-limited: geocoding only "
+                    f"{remaining:,} of {len(ext_unmatched):,} unresolved addresses "
+                    "to stay within the run-wide limit for a free public "
+                    "geocoder. Use ArcGIS with a token or a paid geocoder to "
+                    "resolve the rest."
+                )
+                ext_unmatched = ext_unmatched.head(remaining)
+
+            if len(ext_unmatched) > 0 and remaining > 0:
+                geo_cfg = config.get("geocoder", {})
+                provider = geo_cfg.get("external_provider", "nominatim")
+                logger.info(
+                    f"External fallback ({provider}): {len(ext_unmatched)} "
+                    "residual record(s)..."
+                )
+                # Consume the budget up front by the number actually sent.
+                external_budget[0] -= len(ext_unmatched)
+                ext_results = geocode_external(
+                    unmatched_df=ext_unmatched,
+                    address_col=ADDR_COL,
+                    id_col=args.id_column,
+                    provider=provider,
+                    user_agent=geo_cfg.get(
+                        "external_user_agent", "jhfrc-address2tract/1.0 (research use)",
+                    ),
+                    arcgis_token=geo_cfg.get("arcgis_token"),
+                    delay=geo_cfg.get("external_delay", 1.1),
+                )
+                ext_results["unique_id"] = ext_results["unique_id"].astype(str)
+
+                external_count = 0
+                for _, ex_row in ext_results.iterrows():
+                    if ex_row["match_status"] == "Matched_External":
+                        uid = str(ex_row["unique_id"])
+                        mask = valid_df[args.id_column] == uid
+                        valid_df.loc[mask, "latitude"] = ex_row["latitude"]
+                        valid_df.loc[mask, "longitude"] = ex_row["longitude"]
+                        valid_df.loc[mask, "match_status"] = "Matched_External"
+                        external_count += 1
+
+                # Assign tracts for the externally geocoded records via join.
+                if external_count > 0:
+                    logger.info("Spatial join for externally geocoded records...")
+                    ext_join_mask = valid_df["match_status"] == "Matched_External"
+                    ext_rows = valid_df[ext_join_mask].copy()
+                    ext_rows = join_points_to_tracts(ext_rows, tracts)
+                    valid_df.loc[ext_join_mask, "census_tract_geoid"] = ext_rows[
+                        "census_tract_geoid"
+                    ].values
+
+    # Ensure the columns the assembly step needs exist even when the whole
+    # frame was rejected (no geocoding ran).
+    for col in [
+        "latitude",
+        "longitude",
+        "match_status",
+        "matched_address",
+        "census_tract_geoid",
+    ]:
+        if col not in valid_df.columns:
+            valid_df[col] = pd.Series([None] * len(valid_df), index=valid_df.index)
 
     # ------------------------------------------------------------------
     # 10. Set error reasons
@@ -542,7 +578,7 @@ def main() -> None:
     ] = "Coordinates found but did not fall within a Census tract boundary"
 
     # ------------------------------------------------------------------
-    # 10. Assemble final output
+    # 11. Assemble final output
     # ------------------------------------------------------------------
     valid_df = valid_df.rename(columns={"matched_address": "cleaned_address"})
 
@@ -587,34 +623,325 @@ def main() -> None:
     ordered = id_cols + addr_input_cols + tail_cols
     output_df = output_df[[c for c in ordered if c in output_df.columns]]
 
+    return output_df
+
+
+def main() -> None:
+    parser = _build_parser()
+    args = parser.parse_args()
+
+    config = _load_config(args.config)
+    _setup_logging(config.get("log_level", "INFO"))
+    logger = logging.getLogger(__name__)
+
+    # Determine fallback setting (CLI flags override config)
+    use_fallback = config.get("use_fallback", True)
+    if args.no_fallback:
+        use_fallback = False
+    elif args.use_fallback:
+        use_fallback = True
+
+    # Determine external-fallback setting (CLI flags override config)
+    use_external_fallback = config.get("use_external_fallback", False)
+    if args.no_external_fallback:
+        use_external_fallback = False
+    elif args.use_external_fallback:
+        use_external_fallback = True
+
+    # Determine reference data directory
+    if args.tract_dataset:
+        reference_dir = Path(args.tract_dataset).parent
+    else:
+        reference_dir = Path(config.get("reference_dir", "data/reference"))
+
+    geo_cfg = config.get("geocoder", {})
+    # Per-batch cap on how many unresolved addresses may be sent to the free
+    # external geocoder, so a bad batch cannot spam a public service.
+    external_max_residual = int(geo_cfg.get("external_max_residual", 2000))
+    # File-wide cap: above this many input rows the free external geocoder is
+    # disabled automatically (a very large residual would be abusive on a free
+    # public service). Use ArcGIS with a token or a paid geocoder at that scale.
+    external_max_rows = int(geo_cfg.get("external_max_rows", 100000))
+
+    print()
+    print("=== JHFRC Address to Census Tract Converter ===")
+    print()
+
+    # The column(s) that make up the address, used both to validate the input
+    # and to decide which rows would be rejected during the duplicate-ID scan.
+    if args.address_column:
+        address_columns = [args.address_column]
+    else:
+        address_columns = [
+            c
+            for c in [
+                args.street_column,
+                args.city_column,
+                args.state_column,
+                args.zip_column,
+            ]
+            if c
+        ]
+
     # ------------------------------------------------------------------
-    # 11. Write output
+    # 1. Scan the input file: column names, row count, duplicate IDs.
+    #    (CSV is scanned without loading the whole file into memory.)
     # ------------------------------------------------------------------
+    logger.info(f"Scanning input file: {args.input}")
     try:
-        write_output(output_df, args.output)
+        scan = scan_input(
+            args.input,
+            args.id_column,
+            address_columns=address_columns,
+            sheet_name=args.sheet_name,
+        )
     except Exception as e:
-        print(f"\nError writing output file:\n  {e}")
+        print(f"\nError reading input file:\n  {e}")
+        sys.exit(1)
+
+    columns = scan["columns"]
+    n_rows = scan["n_rows"]
+    logger.info(f"Input has {n_rows:,} rows.")
+
+    # ------------------------------------------------------------------
+    # 2. Validate that required columns exist
+    # ------------------------------------------------------------------
+    required_cols = [args.id_column] + address_columns
+
+    missing = [c for c in required_cols if c not in columns]
+    if missing:
+        print("\nError: The following columns were not found in the input file:")
+        for c in missing:
+            print(f"  - {c}")
+        print(f"\nColumns found in the file: {columns}")
         sys.exit(1)
 
     # ------------------------------------------------------------------
-    # 12. Print summary
+    # 3. PHI / sensitive data check
     # ------------------------------------------------------------------
-    matched_gpkg = int((valid_df["match_status"] == "Matched").sum())
-    matched_api_backup = int(
-        (valid_df["match_status"] == "Matched_CensusAPI_Backup").sum()
-    )
-    matched_fb = int((valid_df["match_status"] == "Matched_Fallback").sum())
-    matched_ext = int((valid_df["match_status"] == "Matched_External").sum())
-    unmatched_final = int(valid_df["match_status"].isin(["No_Match", "Tie"]).sum())
+    logger.info("Checking for sensitive data columns...")
+    try:
+        validate_no_phi(columns)
+    except ValueError as e:
+        print(str(e))
+        sys.exit(1)
+    logger.info("No sensitive columns detected. Proceeding.")
 
+    # ------------------------------------------------------------------
+    # 4. Global unique-ID check. The pipeline keys results on the ID column,
+    #    so IDs must be unique across the ENTIRE file (not just within a
+    #    chunk). Duplicate IDs would cross-contaminate rows. Fail fast.
+    # ------------------------------------------------------------------
+    if scan["n_duplicate_rows"] > 0:
+        print(
+            f"\nError: the ID column '{args.id_column}' contains duplicate "
+            f"values ({scan['n_duplicate_rows']} row(s)).\n"
+            "Each row must have a unique identifier so results can be matched "
+            "back correctly.\n"
+            f"Example duplicate IDs: {scan['duplicate_ids']}"
+        )
+        sys.exit(1)
+
+    # ------------------------------------------------------------------
+    # 5. Decide single-pass vs. chunked processing.
+    #    Chunking turns on automatically for large files so the user does not
+    #    have to think about memory. --chunk-size overrides; --chunk-size 0
+    #    forces a single pass.
+    # ------------------------------------------------------------------
+    if args.chunk_size is not None and args.chunk_size < 0:
+        print(
+            "\nError: --chunk-size must be 0 (force a single pass) or a positive "
+            f"integer. You provided: {args.chunk_size}"
+        )
+        sys.exit(1)
+
+    if args.chunk_size == 0:
+        chunk_size_val = None
+        use_chunking = False
+    else:
+        chunk_size_val = (
+            args.chunk_size
+            if args.chunk_size
+            else config.get("chunk_size") or DEFAULT_CHUNK_THRESHOLD
+        )
+        use_chunking = n_rows > chunk_size_val
+
+    # At large scale, disable the free external geocoder automatically to avoid
+    # spamming a public service with a huge residual.
+    if use_external_fallback and n_rows > external_max_rows:
+        logger.warning(
+            f"External geocoder auto-disabled: {n_rows:,} input rows exceed the "
+            f"safe limit ({external_max_rows:,}) for a free public geocoder. "
+            "The Census geocoder still runs. To geocode the residual at this "
+            "scale, use ArcGIS with a token or a paid geocoder."
+        )
+        use_external_fallback = False
+
+    # ------------------------------------------------------------------
+    # 6. Load the Census tract reference dataset once.
+    # ------------------------------------------------------------------
+    try:
+        tracts = get_tract_dataset(
+            reference_dir,
+            source=config.get("tract_source", "cb500k"),
+            states=config.get("tract_states"),
+        )
+    except Exception as e:
+        print(f"\nError loading Census tract dataset:\n  {e}")
+        sys.exit(1)
+
+    # Run-wide budget for the free external geocoder, shared across all chunks
+    # so the total number of external requests can never exceed this limit.
+    external_budget = [external_max_residual]
+
+    # ------------------------------------------------------------------
+    # 7. Process — single pass, or chunked with resume.
+    # ------------------------------------------------------------------
+    if not use_chunking:
+        try:
+            df = read_input(args.input, sheet_name=args.sheet_name)
+        except Exception as e:
+            print(f"\nError reading input file:\n  {e}")
+            sys.exit(1)
+
+        output_df = _process_frame(
+            df,
+            tracts,
+            args,
+            config,
+            use_fallback,
+            use_external_fallback,
+            external_budget,
+            logger,
+        )
+
+        try:
+            write_output(output_df, args.output)
+        except Exception as e:
+            print(f"\nError writing output file:\n  {e}")
+            sys.exit(1)
+
+        agg = _tally(output_df["match_status"])
+    else:
+        # Chunked mode writes CSV (Excel caps at ~1,048,576 rows and cannot hold
+        # a million-plus record output).
+        output_path = Path(args.output)
+        if output_path.suffix.lower() in (".xlsx", ".xls"):
+            output_path = output_path.with_suffix(".csv")
+            logger.warning(
+                "Chunked mode writes CSV, not Excel (Excel is limited to about "
+                f"1,048,576 rows). Output will be: {output_path}"
+            )
+
+        parts_dir = output_path.parent / (output_path.stem + "_parts")
+        parts_dir.mkdir(parents=True, exist_ok=True)
+
+        # Resume safety: existing part files are only trusted when they came from
+        # a run over the SAME input file and the SAME chunk size. Otherwise the
+        # chunk boundaries differ and reusing old parts would duplicate or drop
+        # rows. A manifest records that identity; on any mismatch we refuse to
+        # resume rather than silently produce a corrupt output.
+        input_stat = Path(args.input).stat()
+        run_signature = {
+            "chunk_size": chunk_size_val,
+            "input_path": str(Path(args.input).resolve()),
+            "input_size": input_stat.st_size,
+            "input_mtime": int(input_stat.st_mtime),
+            "n_rows": n_rows,
+        }
+        manifest_path = parts_dir / "manifest.json"
+        existing_parts = sorted(parts_dir.glob("part_*.csv"))
+        if manifest_path.exists():
+            try:
+                prev_signature = json.loads(manifest_path.read_text())
+            except Exception:
+                prev_signature = None
+            if prev_signature != run_signature:
+                print(
+                    "\nError: the output part folder already contains results from "
+                    "a different run\n"
+                    f"  {parts_dir}\n"
+                    "The input file or the chunk size has changed since those parts "
+                    "were created, so they cannot be safely reused (the chunk "
+                    "boundaries would not line up).\n"
+                    "Either re-run with the original input file and chunk size, or "
+                    "delete that folder to start fresh."
+                )
+                sys.exit(1)
+        elif existing_parts:
+            print(
+                "\nError: the output part folder contains part files but no "
+                "manifest\n"
+                f"  {parts_dir}\n"
+                "These parts are from an older version or an unknown run and "
+                "cannot be safely reused. Delete that folder to start fresh."
+            )
+            sys.exit(1)
+        else:
+            manifest_path.write_text(json.dumps(run_signature, indent=2))
+
+        logger.info(
+            f"Large file ({n_rows:,} rows): chunked processing at "
+            f"{chunk_size_val:,} rows per chunk. Part files: {parts_dir}"
+        )
+
+        agg = defaultdict(int)
+        part_paths = []
+        for idx, chunk in iter_input_chunks(
+            args.input, chunk_size_val, sheet_name=args.sheet_name
+        ):
+            part_path = parts_dir / f"part_{idx:05d}.csv"
+            if part_path.exists():
+                # Resume: this chunk was already completed in a prior run.
+                logger.info(
+                    f"Chunk {idx}: already complete ({part_path.name}), skipping."
+                )
+            else:
+                out_df = _process_frame(
+                    chunk,
+                    tracts,
+                    args,
+                    config,
+                    use_fallback,
+                    use_external_fallback,
+                    external_budget,
+                    logger,
+                )
+                # Write atomically: full write to a temp file, then rename, so an
+                # interrupted run never leaves a half-written part behind.
+                tmp_path = parts_dir / f"part_{idx:05d}.csv.tmp"
+                out_df.to_csv(tmp_path, index=False)
+                tmp_path.replace(part_path)
+                logger.info(
+                    f"Chunk {idx}: {len(out_df):,} rows written to {part_path.name}"
+                )
+
+            # Tally from the part file so resumed (skipped) chunks still count.
+            status = pd.read_csv(part_path, usecols=["match_status"], dtype=str)[
+                "match_status"
+            ]
+            for k, v in _tally(status).items():
+                agg[k] += v
+            part_paths.append(str(part_path))
+
+        concat_csv_parts(part_paths, str(output_path))
+        logger.info(
+            f"Combined {len(part_paths)} part file(s) into {output_path} "
+            f"({agg['total']:,} rows). Part files kept in {parts_dir} for "
+            "resume safety; you may delete that folder once the output looks good."
+        )
+
+    # ------------------------------------------------------------------
+    # 8. Print summary
+    # ------------------------------------------------------------------
     _print_summary(
-        total=len(df),
-        matched_gpkg=matched_gpkg,
-        matched_api_backup=matched_api_backup,
-        matched_fallback=matched_fb,
-        matched_external=matched_ext,
-        unmatched=unmatched_final,
-        rejected=rejected_count,
+        total=agg["total"],
+        matched_gpkg=agg["matched_gpkg"],
+        matched_api_backup=agg["matched_api_backup"],
+        matched_fallback=agg["matched_fallback"],
+        matched_external=agg["matched_external"],
+        unmatched=agg["unmatched"],
+        rejected=agg["rejected"],
     )
 
 
