@@ -386,7 +386,7 @@ below so that you can plan accordingly.
 |---|---|---|
 | Up to 50,000 records | Processes the entire file in a single pass, held in memory. | None. |
 | More than 50,000 records | Automatically switches to **chunked processing**: the file is read and processed in blocks of 50,000 records at a time, so memory use stays bounded regardless of total size. Each block is written to a numbered part file, and the parts are combined into the final output at the end. | None. |
-| More than 100,000 records | In addition to chunking, the **free OpenStreetMap lookup is automatically disabled for the entire run** to avoid overloading a free public service (see the caution below). The Census matching steps still run in full. | None, unless you require the external lookup at this scale (see below). |
+| More than 100,000 records | In addition to chunking, the **free OpenStreetMap lookup is automatically disabled for the entire run** to avoid overloading a free public service (see the caution below). The Census matching steps still run in full. A bulk-capable provider such as ArcGIS is **not** disabled. | None, unless you require the external lookup at this scale — configure ArcGIS (see below). |
 | More than 1,048,576 records (output) | Because Microsoft Excel cannot open a file with more than 1,048,576 rows, chunked runs always write the combined output in **CSV** format. If you request an `.xlsx` output name, the tool writes a `.csv` file instead and reports the corrected name. | Open the result in a CSV-capable program (Excel can still open CSV files, subject to its row limit). |
 
 You do not have to enable any of this. If you prefer to control the block size
@@ -423,21 +423,31 @@ most one request per second and **expressly prohibits bulk or high-volume
 geocoding**. Submitting a large volume of requests may cause your access to be
 blocked and places an unfair burden on a shared public resource.
 
-To keep every run within acceptable use, the tool enforces two limits
-automatically:
+Importantly, the free lookup only ever runs on the **residual** — the small
+share of addresses the Census service could not resolve — never on the whole
+file. Even so, a small percentage of a very large file is a large number of
+requests in absolute terms: at roughly 5% unresolved, a one-million-record file
+would send on the order of **50,000 requests** to a free server capped at one per
+second (about 14 hours of continuous traffic), which is exactly the bulk use the
+service prohibits. The limit is therefore about the absolute request count, not
+the percentage.
 
-- The external lookup is **disabled for the whole run** when the input exceeds
+To keep every run within acceptable use, the tool applies two automatic limits
+**only to the free OpenStreetMap provider**:
+
+- The free lookup is **disabled for the whole run** when the input exceeds
   **100,000 records** (`external_max_rows` in the configuration file).
-- Within any processing block, the external lookup is **skipped** if more than
-  **2,000 records** in that block remain unresolved after the Census steps
-  (`external_max_residual` in the configuration file).
+- Across the whole run, the free lookup sends at most **2,000 requests** total
+  (`external_max_residual` in the configuration file); any remaining unresolved
+  addresses are left as `No_Match`.
 
-If you genuinely need to resolve a large residual of addresses that the Census
-system cannot find, please do **not** raise these limits against the free
-service. Instead, use a geocoding provider intended for volume use — for example
-the Esri ArcGIS World Geocoding service with a developer token (configurable via
-`external_provider: arcgis`), or a commercial geocoder — and contact JHFRC for
-guidance.
+**These caps do not apply to bulk-capable providers.** If you configure the Esri
+ArcGIS World Geocoding service (`external_provider: arcgis`) with a developer
+token, the external step keeps running on the entire residual at any scale,
+because ArcGIS is designed for volume geocoding. For a large residual, that (or a
+commercial geocoder such as Geocodio or Smarty) is the correct tool — please do
+**not** raise the caps against the free OpenStreetMap service. Contact JHFRC for
+guidance if you are unsure.
 
 ---
 

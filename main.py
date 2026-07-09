@@ -655,12 +655,18 @@ def main() -> None:
         reference_dir = Path(config.get("reference_dir", "data/reference"))
 
     geo_cfg = config.get("geocoder", {})
-    # Per-batch cap on how many unresolved addresses may be sent to the free
-    # external geocoder, so a bad batch cannot spam a public service.
+    external_provider = geo_cfg.get("external_provider", "nominatim")
+    # Whether the configured external provider is the free, rate-limited public
+    # service (OpenStreetMap / Nominatim). Bulk-capable providers such as ArcGIS
+    # (which require a token) are exempt from the scale caps below.
+    external_is_free_public = external_provider == "nominatim"
+    # Run-wide budget on how many unresolved addresses may be sent to the free
+    # external geocoder, so the total across all chunks cannot spam a public
+    # service. Only enforced for the free provider.
     external_max_residual = int(geo_cfg.get("external_max_residual", 2000))
-    # File-wide cap: above this many input rows the free external geocoder is
+    # File-wide cap: above this many input rows the FREE external geocoder is
     # disabled automatically (a very large residual would be abusive on a free
-    # public service). Use ArcGIS with a token or a paid geocoder at that scale.
+    # public service). ArcGIS/paid providers are not subject to this.
     external_max_rows = int(geo_cfg.get("external_max_rows", 100000))
 
     print()
@@ -766,14 +772,18 @@ def main() -> None:
         )
         use_chunking = n_rows > chunk_size_val
 
-    # At large scale, disable the free external geocoder automatically to avoid
-    # spamming a public service with a huge residual.
-    if use_external_fallback and n_rows > external_max_rows:
+    # At large scale, disable the FREE external geocoder automatically to avoid
+    # spamming a public service with a huge residual. This applies only to the
+    # free, rate-limited provider (OpenStreetMap / Nominatim); a bulk-capable
+    # provider such as ArcGIS (configured with a token) is built for volume and
+    # keeps running on the residual at any scale.
+    if use_external_fallback and external_is_free_public and n_rows > external_max_rows:
         logger.warning(
-            f"External geocoder auto-disabled: {n_rows:,} input rows exceed the "
-            f"safe limit ({external_max_rows:,}) for a free public geocoder. "
-            "The Census geocoder still runs. To geocode the residual at this "
-            "scale, use ArcGIS with a token or a paid geocoder."
+            f"Free external geocoder (OpenStreetMap) auto-disabled: {n_rows:,} "
+            f"input rows exceed the safe limit ({external_max_rows:,}) for a free "
+            "public service, whose policy prohibits bulk use. The Census geocoder "
+            "still runs. To geocode the residual at this scale, switch "
+            "external_provider to 'arcgis' with a token, or use a paid geocoder."
         )
         use_external_fallback = False
 
@@ -790,9 +800,14 @@ def main() -> None:
         print(f"\nError loading Census tract dataset:\n  {e}")
         sys.exit(1)
 
-    # Run-wide budget for the free external geocoder, shared across all chunks
-    # so the total number of external requests can never exceed this limit.
-    external_budget = [external_max_residual]
+    # Run-wide budget for the external geocoder, shared across all chunks so the
+    # total number of requests can never exceed this limit. The free public
+    # provider is held to external_max_residual; a bulk-capable provider such as
+    # ArcGIS is allowed to work the entire residual (bounded only by row count).
+    if external_is_free_public:
+        external_budget = [external_max_residual]
+    else:
+        external_budget = [max(n_rows, external_max_residual)]
 
     # ------------------------------------------------------------------
     # 7. Process — single pass, or chunked with resume.
