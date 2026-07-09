@@ -301,14 +301,23 @@ you want to change that.
 
 </details>
 
-### Step 4: Add the Census tract to your master file (optional)
+### Step 4: Add the Census tract to a separate master file (optional — most people can skip this)
 
-If your organization keeps a separate master spreadsheet and you would like the
-Census tract copied into it, you can join the two files in Excel using the shared
-unique identifier. The tool's result file and your master file must both contain
-the **same unique-identifier column** (for example `client_id`). Excel matches
-each row by that identifier and copies the corresponding `census_tract_geoid`
-into your master file.
+**You probably do not need this step.** The result file the tool creates already
+contains **all of your original columns plus the Census tract**, matched to the
+correct row. If that result file is what you will use going forward, you are done
+after Step 3 — just open and use it. Nothing needs to be renamed or looked up.
+
+This step is only for one situation: you keep a **separate master spreadsheet**
+(for example, one that also holds columns you did not submit to the tool, such as
+names or dates of birth) and you want the Census tract copied back into that
+separate file. Because it is a different file, Excel lines up the rows using the
+shared unique identifier. Both files must contain the **same
+unique-identifier column** (for example `client_id`).
+
+You do **not** rename anything. In the formulas below, wherever the example says
+`results.xlsx`, use the actual name of the result file you already created — that
+is, whatever you typed after `--output` when you ran the tool.
 
 **Before you begin — preserve leading zeros.** Census tract identifiers are text,
 not numbers, and some begin with a leading zero (for example Alabama tracts begin
@@ -318,7 +327,8 @@ Text** before entering the formula below.
 
 **Step-by-step:**
 
-1. Open **both** files in Excel: your master file and the tool's result file.
+1. Open **both** files in Excel: your master file and the result file the tool
+   created.
 2. In your master file, click the empty cell in the first data row of the column
    where you want the Census tract to appear (this example assumes row 2).
 3. Enter **one** of the formulas below, then press **Enter** and copy the formula
@@ -330,9 +340,9 @@ Text** before entering the formula below.
 =XLOOKUP([unique ID cell], [result-file ID column], [result-file tract column], "Not found")
 ```
 
-For example, if your unique ID is in cell `A2`, the result file is named
-`results.xlsx` with its `client_id` in column A and its `census_tract_geoid` in
-column G:
+For example, if your unique ID is in cell `A2`, and the result file you created
+(here called `results.xlsx`) has its `client_id` in column A and its
+`census_tract_geoid` in column G:
 
 ```
 =XLOOKUP(A2, [results.xlsx]Sheet1!$A:$A, [results.xlsx]Sheet1!$G:$G, "Not found")
