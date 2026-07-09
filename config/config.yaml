@@ -10,10 +10,36 @@
 reference_dir: data/reference
 
 
-# Enable Census Geocoder API fallback for records that could not be
-# matched during the primary batch geocoding step.
-# Set to false to skip fallback and accept the batch results as-is.
+# Enable Census single-address fallback for records the batch step could not
+# match (No_Match) or that came back ambiguous (Tie). The fallback sweeps
+# multiple Census benchmarks (Current, then Census2020) and retries a
+# conservatively normalized street variant. Set to false to accept batch results
+# as-is.
 use_fallback: true
+
+
+# Tract reference boundaries.
+#   cb500k : national generalized cartographic file (default; small, fast).
+#   tiger  : full-resolution TIGER/Line, downloaded per state (exact boundaries,
+#            larger download). Requires tract_states below.
+tract_source: cb500k
+
+# State FIPS codes to load when tract_source is "tiger"
+# (e.g. TN=47, GA=13, AL=01, NC=37). Ignored for cb500k.
+# tract_states: ["47", "13", "01", "37"]
+
+
+# Enable a FREE non-Census geocoder for the residual the Census geocoder cannot
+# resolve (addresses genuinely absent from the Census TIGER address-range file:
+# pedestrian plazas, brand-new developments, some urban segments). Coordinates
+# are still spatially joined to the local tract boundaries, so tract geometry
+# stays authoritative. These records are labeled "Matched_External".
+#
+# CAVEAT: external-geocoder yield measured on OpenStreetMap-sourced test data is
+# optimistic; real client-data yield will be lower. A tract-native commercial
+# geocoder (Geocodio, Smarty) would be simpler and higher-yield but needs a paid
+# key and is not used here.
+use_external_fallback: false
 
 
 # Geocoder settings
@@ -29,6 +55,20 @@ geocoder:
   # Seconds to pause between individual fallback geocoding requests.
   # This helps avoid overloading the Census API during fallback.
   fallback_delay: 0.5
+
+  # External-fallback provider: "nominatim" (no key; public server is rate
+  # limited to <=1 req/s and is for SMALL residuals only) or "arcgis" (needs a
+  # free ArcGIS developer token but supports higher throughput).
+  external_provider: nominatim
+
+  # Descriptive User-Agent required by the Nominatim usage policy.
+  external_user_agent: "jhfrc-address2tract/1.0 (research use)"
+
+  # Seconds between external requests (Nominatim policy: >= 1 req/s).
+  external_delay: 1.1
+
+  # ArcGIS World Geocoder token (only needed when external_provider is "arcgis").
+  # arcgis_token: "YOUR_ARCGIS_TOKEN"
 
 
 # Log detail level: DEBUG, INFO, WARNING, or ERROR
