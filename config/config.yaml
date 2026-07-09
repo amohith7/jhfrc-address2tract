@@ -75,17 +75,20 @@ geocoder:
   # ArcGIS World Geocoder token (only needed when external_provider is "arcgis").
   # arcgis_token: "YOUR_ARCGIS_TOKEN"
 
-  # Anti-abuse limits for the FREE external geocoder. These protect public
-  # services (and your IP) from being used like a bulk endpoint they are not.
-  #   external_max_residual : per-batch cap. If a single batch has more than this
-  #                           many addresses the Census geocoder could not
-  #                           resolve, the external step is skipped for that
-  #                           batch and a warning is logged.
-  #   external_max_rows     : file-wide cap. If the whole input has more than this
-  #                           many rows, the free external geocoder is disabled
+  # Anti-abuse limits that apply ONLY to the free public provider (nominatim).
+  # They protect free services (and your IP) from being used like a bulk endpoint
+  # they are not. A bulk-capable provider such as ArcGIS (with a token) is exempt
+  # from both limits and keeps running on the full residual at any scale.
+  #   external_max_residual : run-wide budget. At most this many addresses are
+  #                           ever sent to the free geocoder across the WHOLE run
+  #                           (shared across all chunks). The rest are left as
+  #                           No_Match. This is the total-request cap.
+  #   external_max_rows     : file-wide switch. If the whole input has more than
+  #                           this many rows, the free geocoder is disabled
   #                           automatically for the entire run (the Census
-  #                           geocoder still runs). Use ArcGIS with a token or a
-  #                           paid geocoder to resolve the residual at that scale.
+  #                           geocoder still runs). Switch external_provider to
+  #                           "arcgis" with a token, or use a paid geocoder, to
+  #                           resolve the residual at that scale.
   external_max_residual: 2000
   external_max_rows: 100000
 
