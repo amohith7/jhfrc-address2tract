@@ -31,7 +31,12 @@ import yaml
 from collections import defaultdict
 
 from phi_validator import validate_no_phi
-from geocode import geocode_batch, geocode_fallback, normalize_zip
+from geocode import (
+    geocode_batch,
+    geocode_fallback,
+    normalize_zip,
+    DEFAULT_CONCURRENCY,
+)
 from geocode_external import geocode_external
 from tract_join import get_tract_dataset, join_points_to_tracts
 from utils.io import (
@@ -145,6 +150,35 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=None,
+        help=(
+            "Number of Census batch requests to send in parallel. Defaults to 6. "
+            "Only affects files large enough to span more than one batch; use 1 "
+            "to force fully sequential geocoding."
+        ),
+    )
+    parser.add_argument(
+        "--retry-passes",
+        type=int,
+        default=None,
+        help=(
+            "Extra times to re-attempt still-unmatched addresses within a run, "
+            "after the normal fallback (default 2). Stops early once a pass "
+            "recovers nothing. Use 0 to disable."
+        ),
+    )
+    parser.add_argument(
+        "--retry-failed",
+        action="store_true",
+        help=(
+            "Retry mode: treat --input as a PREVIOUS results file, re-process "
+            "only its No_Match/Tie rows, and write an updated file to --output "
+            "with any newly matched tracts merged in."
+        ),
+    )
+    parser.add_argument(
         "--sheet-name",
         help="Excel sheet name to read (if the workbook has multiple sheets).",
     )
@@ -221,6 +255,9 @@ def _print_summary(
 # automatically. Files at or below this size are processed in a single pass.
 DEFAULT_CHUNK_THRESHOLD = 50000
 
+# Default number of extra retry passes over still-unmatched rows within a run.
+DEFAULT_RETRY_PASSES = 2
+
 
 def _tally(status: pd.Series) -> dict:
     """Count match_status values for the run summary."""
@@ -236,6 +273,80 @@ def _tally(status: pd.Series) -> dict:
     }
 
 
+def _census_fallback_pass(
+    valid_df: pd.DataFrame,
+    tracts,
+    args,
+    config: dict,
+    addr_col: str,
+    logger: logging.Logger,
+    label: str,
+) -> tuple:
+    """Run ONE Census single-address fallback pass over the current No_Match/Tie
+    rows of valid_df, re-join the newly geocoded rows to tracts, and return
+    (valid_df, number_newly_matched). Called once normally, or repeatedly by the
+    in-run retry-passes loop.
+    """
+    unmatched_mask = valid_df["match_status"].isin(["No_Match", "Tie"])
+    unmatched = valid_df[unmatched_mask].copy()
+    if len(unmatched) == 0:
+        return valid_df, 0
+
+    logger.info(
+        f"{label}: Census single-address API for {len(unmatched)} "
+        "unmatched/tie record(s)..."
+    )
+    fallback_results = geocode_fallback(
+        unmatched_df=unmatched,
+        address_col=addr_col,
+        id_col=args.id_column,
+        delay=config.get("geocoder", {}).get("fallback_delay", 0.5),
+    )
+    fallback_results["unique_id"] = fallback_results["unique_id"].astype(str)
+
+    newly_matched = []
+    for _, fb_row in fallback_results.iterrows():
+        if fb_row["match_status"] == "Matched_Fallback":
+            uid = str(fb_row["unique_id"])
+            mask = valid_df[args.id_column] == uid
+            valid_df.loc[mask, "latitude"] = fb_row["latitude"]
+            valid_df.loc[mask, "longitude"] = fb_row["longitude"]
+            valid_df.loc[mask, "match_status"] = "Matched_Fallback"
+            valid_df.loc[mask, "matched_address"] = fb_row["matched_address"]
+            valid_df.loc[mask, "census_api_geoid"] = fb_row.get("census_api_geoid")
+            newly_matched.append(uid)
+
+    # Re-run the spatial join for ONLY the records newly geocoded in this pass.
+    if newly_matched:
+        logger.info(
+            f"  Re-running GeoPackage spatial join for {len(newly_matched)} "
+            "newly geocoded record(s)..."
+        )
+        new_mask = valid_df[args.id_column].isin(newly_matched)
+        new_rows = valid_df[new_mask].copy()
+        new_rows = join_points_to_tracts(new_rows, tracts)
+
+        # Census API GEOID backup for newly geocoded rows still null after join.
+        nb_null = new_rows["census_tract_geoid"].isna()
+        nb_api = new_rows.get("census_api_geoid", pd.Series(dtype=str)).notna()
+        nb_use = nb_null & nb_api
+        if nb_use.any():
+            new_rows.loc[nb_use, "census_tract_geoid"] = new_rows.loc[
+                nb_use, "census_api_geoid"
+            ]
+            new_rows.loc[nb_use, "match_status"] = "Matched_CensusAPI_Backup"
+
+        new_rows = new_rows.drop(columns=["census_api_geoid"], errors="ignore")
+        valid_df = valid_df.drop(columns=["census_api_geoid"], errors="ignore")
+        valid_df.loc[new_mask, "census_tract_geoid"] = new_rows[
+            "census_tract_geoid"
+        ].values
+        valid_df.loc[new_mask, "match_status"] = new_rows["match_status"].values
+
+    valid_df = valid_df.drop(columns=["census_api_geoid"], errors="ignore")
+    return valid_df, len(newly_matched)
+
+
 def _process_frame(
     df: pd.DataFrame,
     tracts,
@@ -244,6 +355,8 @@ def _process_frame(
     use_fallback: bool,
     use_external_fallback: bool,
     external_budget: list,
+    concurrency: int,
+    retry_passes: int,
     logger: logging.Logger,
 ) -> pd.DataFrame:
     """
@@ -337,6 +450,7 @@ def _process_frame(
             zip_code=zip_series,
             batch_size=config.get("geocoder", {}).get("batch_size", 1000),
             timeout=config.get("geocoder", {}).get("batch_timeout", 120),
+            concurrency=concurrency,
         )
         geo_results["unique_id"] = geo_results["unique_id"].astype(str)
 
@@ -386,83 +500,26 @@ def _process_frame(
         valid_df = valid_df.drop(columns=["census_api_geoid"], errors="ignore")
 
         # 9. FALLBACK geocoding — Census single-address API, only for records
-        #    the batch geocoder could not geocode at all. After getting
-        #    coordinates, the GeoPackage spatial join runs again.
-        fallback_count = 0
+        #    the batch geocoder could not geocode at all. Runs an initial pass,
+        #    then up to retry_passes more passes over whatever is still
+        #    unmatched, stopping early as soon as a pass recovers nothing new
+        #    (a genuine No_Match is deterministic, so extra passes only help when
+        #    a transient API failure caused an earlier miss).
         if use_fallback:
-            # Both true No_Match and ambiguous Tie results are recoverable by
-            # the single-address endpoint, so route both into the fallback.
-            unmatched_mask = valid_df["match_status"].isin(["No_Match", "Tie"])
-            unmatched_for_fallback = valid_df[unmatched_mask].copy()
-
-            if len(unmatched_for_fallback) > 0:
-                logger.info(
-                    f"Fallback: Census single-address API for "
-                    f"{len(unmatched_for_fallback)} unmatched/tie record(s)..."
+            max_attempts = 1 + max(0, retry_passes)
+            for attempt in range(max_attempts):
+                label = (
+                    "Fallback"
+                    if attempt == 0
+                    else f"Retry pass {attempt}/{retry_passes}"
                 )
-                fallback_results = geocode_fallback(
-                    unmatched_df=unmatched_for_fallback,
-                    address_col=ADDR_COL,
-                    id_col=args.id_column,
-                    delay=config.get("geocoder", {}).get("fallback_delay", 0.5),
+                valid_df, n_new = _census_fallback_pass(
+                    valid_df, tracts, args, config, ADDR_COL, logger, label
                 )
-                fallback_results["unique_id"] = fallback_results["unique_id"].astype(
-                    str
-                )
-
-                for _, fb_row in fallback_results.iterrows():
-                    uid = str(fb_row["unique_id"])
-                    if fb_row["match_status"] == "Matched_Fallback":
-                        mask = valid_df[args.id_column] == uid
-                        valid_df.loc[mask, "latitude"] = fb_row["latitude"]
-                        valid_df.loc[mask, "longitude"] = fb_row["longitude"]
-                        valid_df.loc[mask, "match_status"] = "Matched_Fallback"
-                        valid_df.loc[mask, "matched_address"] = fb_row[
-                            "matched_address"
-                        ]
-                        valid_df.loc[mask, "census_api_geoid"] = fb_row.get(
-                            "census_api_geoid"
-                        )
-                        fallback_count += 1
-
-                # Re-run spatial join for newly geocoded fallback records
-                if fallback_count > 0:
-                    logger.info(
-                        "Re-running GeoPackage spatial join for "
-                        "fallback-geocoded records..."
-                    )
-                    fallback_mask = valid_df["match_status"] == "Matched_Fallback"
-                    fallback_rows = valid_df[fallback_mask].copy()
-                    fallback_rows = join_points_to_tracts(fallback_rows, tracts)
-
-                    # Census API backup for fallback rows still null after join
-                    fb_gpkg_null = fallback_rows["census_tract_geoid"].isna()
-                    fb_api_available = fallback_rows.get(
-                        "census_api_geoid", pd.Series(dtype=str)
-                    ).notna()
-                    fb_use_backup = fb_gpkg_null & fb_api_available
-                    if fb_use_backup.any():
-                        fallback_rows.loc[
-                            fb_use_backup, "census_tract_geoid"
-                        ] = fallback_rows.loc[fb_use_backup, "census_api_geoid"]
-                        fallback_rows.loc[
-                            fb_use_backup, "match_status"
-                        ] = "Matched_CensusAPI_Backup"
-
-                    fallback_rows = fallback_rows.drop(
-                        columns=["census_api_geoid"], errors="ignore"
-                    )
-                    valid_df = valid_df.drop(
-                        columns=["census_api_geoid"], errors="ignore"
-                    )
-
-                    # Merge fallback spatial join results back
-                    valid_df.loc[fallback_mask, "census_tract_geoid"] = fallback_rows[
-                        "census_tract_geoid"
-                    ].values
-                    valid_df.loc[fallback_mask, "match_status"] = fallback_rows[
-                        "match_status"
-                    ].values
+                # Stop once a pass produces no new matches (nothing left to
+                # recover, or the residual is genuinely unmatchable).
+                if n_new == 0:
+                    break
 
         valid_df = valid_df.drop(columns=["census_api_geoid"], errors="ignore")
 
@@ -626,6 +683,173 @@ def _process_frame(
     return output_df
 
 
+# Tool-generated result columns, updated in place when merging a retry back into
+# a previous results file.
+_RESULT_COLS = ["cleaned_address", "census_tract_geoid", "match_status", "error_reason"]
+
+
+def _run_retry_mode(
+    tracts,
+    args,
+    config: dict,
+    address_columns: list,
+    use_fallback: bool,
+    use_external_fallback: bool,
+    external_is_free_public: bool,
+    external_max_residual: int,
+    concurrency: int,
+    retry_passes: int,
+    logger: logging.Logger,
+) -> dict:
+    """Retry-from-file mode: re-process only the No_Match/Tie rows of a previous
+    results file and merge any newly matched tracts back into the full file.
+    Returns the aggregate tally for the summary.
+    """
+    # Retry mode loads the whole previous file into memory (it needs every row to
+    # write the file back). The normal path auto-chunks above DEFAULT_CHUNK_THRESHOLD;
+    # retry mode has no equivalent, so scan the size first (memory-bounded for CSV)
+    # and warn before committing to a full-file load that could exhaust RAM.
+    try:
+        pre_scan = scan_input(
+            args.input,
+            args.id_column,
+            address_columns=address_columns,
+            sheet_name=args.sheet_name,
+        )
+        if pre_scan["n_rows"] > DEFAULT_CHUNK_THRESHOLD:
+            logger.warning(
+                f"Retry mode loads the entire file ({pre_scan['n_rows']:,} rows) "
+                "into memory in one pass and does not chunk. If this exhausts "
+                "memory, re-run the full file through normal (chunked) mode "
+                "instead of --retry-failed."
+            )
+    except Exception:
+        # A scan failure is non-fatal; the read below reports any real problem.
+        pass
+
+    try:
+        prev = read_input(args.input, sheet_name=args.sheet_name)
+    except Exception as e:
+        print(f"\nError reading input file:\n  {e}")
+        sys.exit(1)
+
+    # The retry input must be a prior results file (needs the ID, the address
+    # column(s), and a match_status column to know which rows failed).
+    required = [args.id_column, "match_status"] + address_columns
+    missing = [c for c in required if c not in prev.columns]
+    if missing:
+        print(
+            "\nError: --retry-failed expects a PREVIOUS results file, but these "
+            "required columns were not found:"
+        )
+        for c in missing:
+            print(f"  - {c}")
+        print(f"\nColumns found in the file: {list(prev.columns)}")
+        sys.exit(1)
+
+    try:
+        validate_no_phi(list(prev.columns))
+    except ValueError as e:
+        print(str(e))
+        sys.exit(1)
+
+    prev[args.id_column] = prev[args.id_column].astype(str)
+
+    # Duplicate IDs would cross-contaminate rows during the merge-back (a single
+    # retried result would overwrite every row sharing that ID, and a duplicate
+    # inside the retried subset raises on reindex). Fail fast, mirroring the
+    # normal path's duplicate-ID guard.
+    dup_mask = prev[args.id_column].duplicated(keep=False)
+    if dup_mask.any():
+        dup_ids = list(prev.loc[dup_mask, args.id_column].unique()[:5])
+        print(
+            f"\nError: the ID column '{args.id_column}' in the retry file contains "
+            f"duplicate values ({int(dup_mask.sum())} row(s))."
+        )
+        print(
+            "Each row must have a unique identifier so retried results can be "
+            "matched back correctly."
+        )
+        print(f"Example duplicate IDs: {dup_ids}")
+        sys.exit(1)
+
+    failed_mask = prev["match_status"].isin(["No_Match", "Tie"])
+    n_failed = int(failed_mask.sum())
+
+    if n_failed == 0:
+        logger.info("Retry mode: no No_Match/Tie rows found; writing file unchanged.")
+        try:
+            write_output(prev, args.output)
+        except Exception as e:
+            print(f"\nError writing output file:\n  {e}")
+            sys.exit(1)
+        return _tally(prev["match_status"])
+
+    logger.info(f"Retry mode: re-processing {n_failed:,} No_Match/Tie row(s)...")
+
+    # Feed only the original input columns back through the pipeline; drop the
+    # tool-generated result columns so the fresh geocode does not collide with
+    # the previous run's values.
+    subset = (
+        prev[failed_mask]
+        .drop(columns=[c for c in _RESULT_COLS if c in prev.columns], errors="ignore")
+        .copy()
+    )
+
+    external_budget = (
+        [external_max_residual]
+        if external_is_free_public
+        else [max(n_failed, external_max_residual)]
+    )
+
+    retry_out = _process_frame(
+        subset,
+        tracts,
+        args,
+        config,
+        use_fallback,
+        use_external_fallback,
+        external_budget,
+        concurrency,
+        retry_passes,
+        logger,
+    )
+    retry_out[args.id_column] = retry_out[args.id_column].astype(str)
+
+    # Merge the refreshed result columns back onto the retried rows, keyed on the
+    # unique ID. Untouched rows keep their original values.
+    updated = prev.set_index(args.id_column)
+    ridx = retry_out.set_index(args.id_column)
+    for col in _RESULT_COLS:
+        if col in ridx.columns:
+            # Add any result column the previous file lacked (e.g. an older or
+            # hand-built failures file with no census_tract_geoid) so a recovered
+            # tract is written rather than silently dropped.
+            if col not in updated.columns:
+                updated[col] = pd.NA
+            updated.loc[ridx.index, col] = ridx[col]
+    # Preserve the previous column order, then append any result columns that were
+    # newly added above so they survive the output projection.
+    out_cols = list(prev.columns) + [c for c in _RESULT_COLS if c not in prev.columns]
+    updated = updated.reset_index()[out_cols]
+
+    newly_matched = int(
+        ridx["match_status"].astype(str).str.startswith("Matched").sum()
+    )
+    logger.info(
+        f"Retry mode: recovered {newly_matched:,} of {n_failed:,} previously "
+        "unmatched record(s)."
+    )
+
+    try:
+        write_output(updated, args.output)
+    except Exception as e:
+        print(f"\nError writing output file:\n  {e}")
+        sys.exit(1)
+
+    return _tally(updated["match_status"])
+
+
 def main() -> None:
     parser = _build_parser()
     args = parser.parse_args()
@@ -669,6 +893,41 @@ def main() -> None:
     # public service). ArcGIS/paid providers are not subject to this.
     external_max_rows = int(geo_cfg.get("external_max_rows", 100000))
 
+    # Census batch concurrency (CLI overrides config; default 6). Clamp to >= 1.
+    if args.concurrency is not None:
+        concurrency = args.concurrency
+    else:
+        # A present-but-null YAML key (`concurrency:` with no value) parses to
+        # None, which .get() does NOT replace with the default; coalesce it here.
+        concurrency = geo_cfg.get("concurrency")
+        if concurrency is None:
+            concurrency = DEFAULT_CONCURRENCY
+    try:
+        concurrency = max(1, int(concurrency))
+    except (TypeError, ValueError):
+        print(
+            f"\nError: invalid geocoder.concurrency in config: {concurrency!r} "
+            "(expected an integer)."
+        )
+        sys.exit(1)
+
+    # In-run retry passes over still-unmatched rows (CLI overrides config;
+    # default 2). Clamp to >= 0.
+    if args.retry_passes is not None:
+        retry_passes = args.retry_passes
+    else:
+        retry_passes = geo_cfg.get("retry_passes")
+        if retry_passes is None:
+            retry_passes = DEFAULT_RETRY_PASSES
+    try:
+        retry_passes = max(0, int(retry_passes))
+    except (TypeError, ValueError):
+        print(
+            f"\nError: invalid geocoder.retry_passes in config: {retry_passes!r} "
+            "(expected an integer)."
+        )
+        sys.exit(1)
+
     print()
     print("=== JHFRC Address to Census Tract Converter ===")
     print()
@@ -688,6 +947,46 @@ def main() -> None:
             ]
             if c
         ]
+
+    # ------------------------------------------------------------------
+    # Retry-from-file mode: re-process only the failed rows of a previous
+    # results file, merge matches back in, and finish. Skips the normal
+    # scan / chunk / resume flow entirely.
+    # ------------------------------------------------------------------
+    if args.retry_failed:
+        try:
+            tracts = get_tract_dataset(
+                reference_dir,
+                source=config.get("tract_source", "cb500k"),
+                states=config.get("tract_states"),
+            )
+        except Exception as e:
+            print(f"\nError loading Census tract dataset:\n  {e}")
+            sys.exit(1)
+
+        agg = _run_retry_mode(
+            tracts,
+            args,
+            config,
+            address_columns,
+            use_fallback,
+            use_external_fallback,
+            external_is_free_public,
+            external_max_residual,
+            concurrency,
+            retry_passes,
+            logger,
+        )
+        _print_summary(
+            total=agg["total"],
+            matched_gpkg=agg["matched_gpkg"],
+            matched_api_backup=agg["matched_api_backup"],
+            matched_fallback=agg["matched_fallback"],
+            matched_external=agg["matched_external"],
+            unmatched=agg["unmatched"],
+            rejected=agg["rejected"],
+        )
+        return
 
     # ------------------------------------------------------------------
     # 1. Scan the input file: column names, row count, duplicate IDs.
@@ -827,6 +1126,8 @@ def main() -> None:
             use_fallback,
             use_external_fallback,
             external_budget,
+            concurrency,
+            retry_passes,
             logger,
         )
 
@@ -920,6 +1221,8 @@ def main() -> None:
                     use_fallback,
                     use_external_fallback,
                     external_budget,
+                    concurrency,
+                    retry_passes,
                     logger,
                 )
                 # Write atomically: full write to a temp file, then rename, so an

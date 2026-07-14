@@ -21,6 +21,7 @@ import io
 import re
 import time
 import logging
+from concurrent.futures import ThreadPoolExecutor
 
 import requests
 import pandas as pd
@@ -28,6 +29,12 @@ import pandas as pd
 from normalize import normalize_street
 
 logger = logging.getLogger(__name__)
+
+# Number of Census batch requests sent in parallel. Concurrency only matters for
+# files that span more than one batch (i.e. more than batch_size addresses); a
+# small single-batch file behaves identically at any setting. The free external
+# (Nominatim) geocoder is never parallelized — its policy caps it at 1 req/sec.
+DEFAULT_CONCURRENCY = 6
 
 # Geography endpoints return both coordinates AND census tract info
 BATCH_URL = "https://geocoding.geo.census.gov/geocoder/geographies/addressbatch"
@@ -157,6 +164,47 @@ def _batch_csv_row(uid, street, city, state, zip_code) -> str:
     )
 
 
+def _geocode_one_batch(
+    start: int,
+    end: int,
+    total: int,
+    unique_ids: pd.Series,
+    street: pd.Series,
+    city: pd.Series,
+    state: pd.Series,
+    zip_code: pd.Series,
+    timeout: int,
+) -> list:
+    """Geocode a single [start, end) slice and return its result rows.
+
+    Safe to call from a worker thread: it only reads shared Series and returns a
+    new list (no shared mutable state), and requests handles each HTTP call
+    independently.
+    """
+    chunk_ids = unique_ids.iloc[start:end]
+    logger.info(f"  Geocoding records {start + 1}–{end} of {total}...")
+
+    csv_lines = [
+        _batch_csv_row(
+            unique_ids.iloc[i],
+            street.iloc[i],
+            city.iloc[i],
+            state.iloc[i],
+            zip_code.iloc[i],
+        )
+        for i in range(start, end)
+    ]
+    csv_content = "".join(csv_lines)
+
+    response = _post_batch_with_retry(csv_content, timeout)
+    if response is None:
+        # Transient failures persisted through all retries. Mark this chunk
+        # No_Match; the single-address fallback will still try each record.
+        return [_no_match(str(uid)) for uid in chunk_ids]
+
+    return _parse_batch_response(response.text, chunk_ids)
+
+
 def geocode_batch(
     unique_ids: pd.Series,
     street: pd.Series,
@@ -165,6 +213,7 @@ def geocode_batch(
     zip_code: pd.Series | None = None,
     batch_size: int = DEFAULT_BATCH_SIZE,
     timeout: int = DEFAULT_BATCH_TIMEOUT,
+    concurrency: int = DEFAULT_CONCURRENCY,
 ) -> pd.DataFrame:
     """
     Geocode addresses using the Census Geography Batch API.
@@ -188,6 +237,9 @@ def geocode_batch(
     zip_code    : Series of ZIP codes (optional).
     batch_size  : Number of records to send per API request.
     timeout     : Request timeout in seconds.
+    concurrency : Number of batch requests to send in parallel. 1 is fully
+                  sequential (unchanged legacy behavior). Only affects files
+                  large enough to span more than one batch.
 
     Returns
     -------
@@ -204,35 +256,26 @@ def geocode_batch(
     state = _aligned_series(state, total)
     zip_code = _aligned_series(zip_code, total)
 
-    for start in range(0, total, batch_size):
-        end = min(start + batch_size, total)
-        chunk_ids = unique_ids.iloc[start:end]
+    starts = list(range(0, total, batch_size))
+    args = (total, unique_ids, street, city, state, zip_code, timeout)
 
-        logger.info(f"  Geocoding records {start + 1}–{end} of {total}...")
-
-        csv_lines = []
-        for i in range(start, end):
-            csv_lines.append(
-                _batch_csv_row(
-                    unique_ids.iloc[i],
-                    street.iloc[i],
-                    city.iloc[i],
-                    state.iloc[i],
-                    zip_code.iloc[i],
+    if concurrency <= 1 or len(starts) <= 1:
+        # Sequential: identical behavior to the pre-concurrency version.
+        for start in starts:
+            end = min(start + batch_size, total)
+            results.extend(_geocode_one_batch(start, end, *args))
+    else:
+        # Parallel: submit every batch to a thread pool, then collect in
+        # submission order so the output row order stays deterministic.
+        with ThreadPoolExecutor(max_workers=concurrency) as executor:
+            futures = [
+                executor.submit(
+                    _geocode_one_batch, start, min(start + batch_size, total), *args
                 )
-            )
-        csv_content = "".join(csv_lines)
-
-        response = _post_batch_with_retry(csv_content, timeout)
-        if response is None:
-            # Transient failures persisted through all retries. Mark this chunk
-            # No_Match; the single-address fallback will still try each record.
-            for uid in chunk_ids:
-                results.append(_no_match(str(uid)))
-            continue
-
-        chunk_results = _parse_batch_response(response.text, chunk_ids)
-        results.extend(chunk_results)
+                for start in starts
+            ]
+            for future in futures:
+                results.extend(future.result())
 
     return pd.DataFrame(results)
 

@@ -54,6 +54,19 @@ geocoder:
   # The Census API supports up to 10,000; 1,000 is a safer default.
   batch_size: 1000
 
+  # Number of Census batch requests to send in parallel. Only matters for files
+  # large enough to span more than one batch (more than batch_size addresses);
+  # a small single-batch file behaves identically at any value. The free
+  # external (Nominatim) geocoder is never parallelized. Override per run with
+  # --concurrency; set to 1 for fully sequential geocoding.
+  concurrency: 6
+
+  # Extra times to re-attempt still-unmatched (No_Match/Tie) rows within a run,
+  # after the normal fallback. Stops early as soon as a pass recovers nothing,
+  # so it only adds work when a transient API failure caused an earlier miss.
+  # Override per run with --retry-passes; set to 0 to disable.
+  retry_passes: 2
+
   # Seconds to wait before timing out a batch geocoding request.
   batch_timeout: 120
 
