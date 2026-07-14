@@ -161,6 +161,9 @@ The Census retry and the free OpenStreetMap lookup are **on by default**, so a n
 | `--sheet-name` | The Excel sheet to read, if your workbook has more than one sheet. |
 | `--no-fallback` | Turn off the slower Census one-at-a-time retry. |
 | `--no-external-fallback` | Turn off the OpenStreetMap lookup (faster, but matches fewer). |
+| `--retry-passes N` | How many extra times to re-try the still-unmatched rows within a run (default 2). The tool stops early once a pass recovers nothing. |
+| `--retry-failed` | Re-process only the `No_Match`/`Tie` rows of a **previous** result file and merge any new matches back in. See [Retrying addresses that did not match](#retrying-addresses-that-did-not-match). |
+| `--concurrency N` | How many Census batches to send at once (default 6). Only affects files large enough to span multiple batches. Set to `1` for one-at-a-time. |
 | `--chunk-size` | Rows per block for very large files. Set automatically; see [Processing Large Files](#processing-large-files). Use `0` to force a single pass. |
 | `--config` | Use a different settings file (default: `config/config.yaml`). |
 
@@ -200,6 +203,25 @@ Replace `7` with the actual position of `census_tract_geoid` counted from your i
 
 ---
 
+## Retrying addresses that did not match
+
+A normal run already retries unmatched addresses several times on its own, so most files need nothing further. But if a run was interrupted, or the Census service was briefly having trouble, you can re-try **only** the addresses that came back `No_Match` or `Tie` — without re-processing the ones that already matched:
+
+```
+python main.py --retry-failed \
+  --input data/output/results.xlsx \
+  --output data/output/results_retry.xlsx \
+  --id-column client_id \
+  --street-column street --city-column city --state-column state --zip-column zip
+```
+
+- The **input** is a **result file the tool made earlier** (not your original address list). Point `--output` at a new file name so your first result is preserved.
+- Only the `No_Match`/`Tie` rows are looked up again; every already-matched row is copied through unchanged.
+- The new file has the same columns as the old one, now with any recovered Census tracts filled in.
+- Use the same column names you used on the first run. Each row must still have a unique identifier (the tool stops if the identifier column has duplicates).
+
+---
+
 ## Processing Large Files
 
 The tool handles files of any size and adjusts automatically — you do not change the command.
@@ -215,7 +237,7 @@ To control the block size yourself, add `--chunk-size N` (or `--chunk-size 0` to
 
 **Resuming an interrupted run:** if a long run stops partway, run the exact same command again — completed blocks are skipped and never duplicated. Part files are kept in a `<output>_parts` folder; delete it once the result looks correct.
 
-**Time:** speed depends on the Census service — roughly **1,000 addresses every 2 minutes** — so a million records can take one to two days. Plan for an overnight run and rely on resume.
+**Time:** speed depends on the Census service. To go faster on large files the tool sends **several Census batches at once** (6 by default), so files that span many batches process substantially quicker than one-at-a-time; a rough planning figure is **1,000 addresses every 2 minutes**. Even so, a million records can take several hours to a day or more, so plan for a long or overnight run and rely on resume. Lower the parallelism with `--concurrency N` if you ever need to be gentler on the service.
 
 **Free-service caution:** the free OpenStreetMap lookup only runs on the residual the Census could not match, but even a few percent of a huge file is tens of thousands of requests, which OpenStreetMap's policy (one request per second, no bulk use) prohibits. So for files over 100,000 records the free lookup is disabled automatically, and in any run it is capped at 2,000 total requests. For a large residual, use a bulk-capable geocoder (ArcGIS with a token, via `external_provider: arcgis`, or a commercial service such as Geocodio or Smarty) — do not point the free service at bulk work. Contact JHFRC if you are unsure.
 
