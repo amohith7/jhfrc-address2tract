@@ -74,9 +74,12 @@ geocoder:
   # This helps avoid overloading the Census API during fallback.
   fallback_delay: 0.5
 
-  # External-fallback provider: "nominatim" (no key; public server is rate
-  # limited to <=1 req/s and is for SMALL residuals only) or "arcgis" (needs a
-  # free ArcGIS developer token but supports higher throughput).
+  # External-fallback provider:
+  #   "nominatim" - no key; public server is rate limited to <=1 req/s and is for
+  #                 SMALL residuals only.
+  #   "arcgis"    - needs a free ArcGIS developer token; higher throughput.
+  #   "geoapify"  - needs a free Geoapify API key (3,000 requests/day free, no
+  #                 credit card); good coverage for a large residual.
   external_provider: nominatim
 
   # Descriptive User-Agent required by the Nominatim usage policy.
@@ -86,7 +89,13 @@ geocoder:
   external_delay: 1.1
 
   # ArcGIS World Geocoder token (only needed when external_provider is "arcgis").
+  # Prefer the ARCGIS_TOKEN environment variable over storing it here.
   # arcgis_token: "YOUR_ARCGIS_TOKEN"
+
+  # Geoapify API key (only needed when external_provider is "geoapify").
+  # Prefer the GEOAPIFY_KEY environment variable over storing it in this file, so
+  # the key never lands on disk or in version control.
+  # geoapify_key: "YOUR_GEOAPIFY_KEY"
 
   # Anti-abuse limits that apply ONLY to the free public provider (nominatim).
   # They protect free services (and your IP) from being used like a bulk endpoint
