@@ -15,6 +15,7 @@ Usage examples:
       --state-column state --zip-column zip
 """
 
+import os
 import sys
 import json
 import logging
@@ -138,6 +139,25 @@ def _build_parser() -> argparse.ArgumentParser:
         "--no-external-fallback",
         action="store_true",
         help="Disable the external geocoder fallback.",
+    )
+    parser.add_argument(
+        "--approve-egress",
+        action="store_true",
+        help=(
+            "REQUIRED to allow any outbound network call. Without it the tool "
+            "refuses to contact any geocoder and exits after printing exactly "
+            "what it WOULD send and where. No data is ever sent to Anthropic."
+        ),
+    )
+    parser.add_argument(
+        "--external-provider",
+        choices=["nominatim", "arcgis", "geoapify"],
+        default=None,
+        help=(
+            "External geocoder for the residual (overrides config). 'nominatim' "
+            "(free, small residuals only), 'arcgis' (token), or 'geoapify' "
+            "(free API key via GEOAPIFY_KEY env var)."
+        ),
     )
     parser.add_argument(
         "--chunk-size",
@@ -281,6 +301,7 @@ def _census_fallback_pass(
     addr_col: str,
     logger: logging.Logger,
     label: str,
+    concurrency: int = 1,
 ) -> tuple:
     """Run ONE Census single-address fallback pass over the current No_Match/Tie
     rows of valid_df, re-join the newly geocoded rows to tracts, and return
@@ -301,6 +322,7 @@ def _census_fallback_pass(
         address_col=addr_col,
         id_col=args.id_column,
         delay=config.get("geocoder", {}).get("fallback_delay", 0.5),
+        concurrency=concurrency,
     )
     fallback_results["unique_id"] = fallback_results["unique_id"].astype(str)
 
@@ -514,7 +536,14 @@ def _process_frame(
                     else f"Retry pass {attempt}/{retry_passes}"
                 )
                 valid_df, n_new = _census_fallback_pass(
-                    valid_df, tracts, args, config, ADDR_COL, logger, label
+                    valid_df,
+                    tracts,
+                    args,
+                    config,
+                    ADDR_COL,
+                    logger,
+                    label,
+                    concurrency=concurrency,
                 )
                 # Stop once a pass produces no new matches (nothing left to
                 # recover, or the residual is genuinely unmatchable).
@@ -558,7 +587,9 @@ def _process_frame(
 
             if len(ext_unmatched) > 0 and remaining > 0:
                 geo_cfg = config.get("geocoder", {})
-                provider = geo_cfg.get("external_provider", "nominatim")
+                provider = args.external_provider or geo_cfg.get(
+                    "external_provider", "nominatim"
+                )
                 logger.info(
                     f"External fallback ({provider}): {len(ext_unmatched)} "
                     "residual record(s)..."
@@ -573,8 +604,14 @@ def _process_frame(
                     user_agent=geo_cfg.get(
                         "external_user_agent", "jhfrc-address2tract/1.0 (research use)",
                     ),
-                    arcgis_token=geo_cfg.get("arcgis_token"),
+                    arcgis_token=(
+                        geo_cfg.get("arcgis_token") or os.environ.get("ARCGIS_TOKEN")
+                    ),
+                    geoapify_key=(
+                        geo_cfg.get("geoapify_key") or os.environ.get("GEOAPIFY_KEY")
+                    ),
                     delay=geo_cfg.get("external_delay", 1.1),
+                    concurrency=concurrency,
                 )
                 ext_results["unique_id"] = ext_results["unique_id"].astype(str)
 
@@ -858,6 +895,51 @@ def main() -> None:
     _setup_logging(config.get("log_level", "INFO"))
     logger = logging.getLogger(__name__)
 
+    # ------------------------------------------------------------------
+    # EGRESS GATE. This tool geocodes by sending addresses to a geocoding
+    # service, which is an outbound network call. To guarantee no data leaves
+    # this machine without explicit approval, the tool refuses to run any
+    # network step unless --approve-egress is passed. Nothing is ever sent to
+    # Anthropic; the model that wrote this code does not run it.
+    # ------------------------------------------------------------------
+    if not args.approve_egress:
+        geo_cfg = config.get("geocoder", {})
+        provider = args.external_provider or geo_cfg.get(
+            "external_provider", "nominatim"
+        )
+        ext_on = config.get("use_external_fallback", True) and not (
+            args.no_external_fallback
+        )
+        print()
+        print("=" * 64)
+        print("  EGRESS NOT APPROVED — nothing was sent. Dry run only.")
+        print("=" * 64)
+        print("  This run WOULD make outbound requests to:")
+        print("    - geocoding.geo.census.gov   (Census geocoder: your")
+        print("      addresses -> coordinates)")
+        if ext_on:
+            dest = {
+                "geoapify": "api.geoapify.com",
+                "arcgis": "geocode.arcgis.com",
+                "nominatim": "nominatim.openstreetmap.org",
+            }.get(provider, provider)
+            print(f"    - {dest}   (external fallback for the residual)")
+        print("    - www2.census.gov   (one-time tract-map download, only if")
+        print("      the local tract file is missing)")
+        print()
+        print("  It sends NOTHING to Anthropic / Claude. Your input file is")
+        print("  read and written only on this machine.")
+        print()
+        print("  To authorize these requests and run for real, re-run with:")
+        print("      --approve-egress")
+        print("=" * 64)
+        sys.exit(0)
+
+    logger.info(
+        "Egress approved by --approve-egress. Outbound geocoding enabled "
+        "(Census / external provider only; nothing to Anthropic)."
+    )
+
     # Determine fallback setting (CLI flags override config)
     use_fallback = config.get("use_fallback", True)
     if args.no_fallback:
@@ -879,7 +961,9 @@ def main() -> None:
         reference_dir = Path(config.get("reference_dir", "data/reference"))
 
     geo_cfg = config.get("geocoder", {})
-    external_provider = geo_cfg.get("external_provider", "nominatim")
+    external_provider = args.external_provider or geo_cfg.get(
+        "external_provider", "nominatim"
+    )
     # Whether the configured external provider is the free, rate-limited public
     # service (OpenStreetMap / Nominatim). Bulk-capable providers such as ArcGIS
     # (which require a token) are exempt from the scale caps below.
