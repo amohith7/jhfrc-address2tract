@@ -21,7 +21,7 @@ import io
 import re
 import time
 import logging
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 import pandas as pd
@@ -375,50 +375,81 @@ def _parse_batch_response(response_text: str, chunk_ids: pd.Series) -> list:
     return results
 
 
+DEFAULT_SINGLE_RETRIES = 3  # attempts on transient (5xx / 429 / network) failures
+
+
 def _geocode_single_benchmark(
-    address: str, unique_id: str, benchmark: str, vintage: str
+    address: str,
+    unique_id: str,
+    benchmark: str,
+    vintage: str,
+    retries: int = DEFAULT_SINGLE_RETRIES,
 ) -> dict | None:
     """
     Geocode one address against a single (benchmark, vintage) pair.
     Returns a match dict on success, or None if this benchmark did not match.
-    """
-    try:
-        response = requests.get(
-            ONELINE_URL,
-            params={
-                "address": address,
-                "benchmark": benchmark,
-                "vintage": vintage,
-                "format": "json",
-            },
-            timeout=30,
-        )
-        response.raise_for_status()
-        data = response.json()
-        matches = data.get("result", {}).get("addressMatches", [])
-        if matches:
-            match = matches[0]
-            coords = match.get("coordinates", {})
-            lat = coords.get("y")
-            lon = coords.get("x")
-            if lat is not None and lon is not None:
-                # Try to get backup GEOID from the geography response
-                tracts = match.get("geographies", {}).get("Census Tracts", [])
-                census_api_geoid = tracts[0].get("GEOID") if tracts else None
 
-                return {
-                    "unique_id": unique_id,
-                    "latitude": float(lat),
-                    "longitude": float(lon),
-                    "match_status": "Matched_Fallback",
-                    "matched_address": match.get("matchedAddress", ""),
-                    "census_api_geoid": census_api_geoid,
-                }
-    except Exception as e:
-        logger.debug(
-            f"  Fallback geocoding failed for ID {unique_id} "
-            f"(benchmark {benchmark}): {e}"
-        )
+    Transient failures (HTTP 429 rate-limit, 5xx, timeout, connection reset) are
+    retried with exponential backoff rather than swallowed. This matters when
+    many single-address requests run concurrently: without it, a rate-limit
+    response would be silently turned into a false No_Match and lower the match
+    rate. A valid 200 response with no candidates is a real miss (not retried).
+    """
+    for attempt in range(1, retries + 1):
+        try:
+            response = requests.get(
+                ONELINE_URL,
+                params={
+                    "address": address,
+                    "benchmark": benchmark,
+                    "vintage": vintage,
+                    "format": "json",
+                },
+                timeout=30,
+            )
+            status = response.status_code
+            # Retry only on transient server-side statuses.
+            if status >= 500 or status == 429:
+                raise requests.HTTPError(f"{status} transient server error")
+            response.raise_for_status()
+            data = response.json()
+            matches = data.get("result", {}).get("addressMatches", [])
+            if matches:
+                match = matches[0]
+                coords = match.get("coordinates", {})
+                lat = coords.get("y")
+                lon = coords.get("x")
+                if lat is not None and lon is not None:
+                    # Try to get backup GEOID from the geography response
+                    tracts = match.get("geographies", {}).get("Census Tracts", [])
+                    census_api_geoid = tracts[0].get("GEOID") if tracts else None
+
+                    return {
+                        "unique_id": unique_id,
+                        "latitude": float(lat),
+                        "longitude": float(lon),
+                        "match_status": "Matched_Fallback",
+                        "matched_address": match.get("matchedAddress", ""),
+                        "census_api_geoid": census_api_geoid,
+                    }
+            # Valid response, no usable match: a genuine miss, not transient.
+            return None
+        except requests.RequestException as e:
+            if attempt < retries:
+                backoff = 2 ** (attempt - 1)  # 1s, 2s, 4s, ...
+                time.sleep(backoff)
+            else:
+                logger.debug(
+                    f"  Fallback geocoding failed for ID {unique_id} "
+                    f"(benchmark {benchmark}) after {retries} attempts: {e}"
+                )
+        except Exception as e:
+            # Non-network error (e.g. malformed JSON): not transient, don't retry.
+            logger.debug(
+                f"  Fallback parse error for ID {unique_id} "
+                f"(benchmark {benchmark}): {e}"
+            )
+            return None
     return None
 
 
@@ -456,22 +487,49 @@ def _normalize_address_street(address: str) -> str:
     return addr
 
 
+def _fallback_one_record(row, address_col: str, id_col: str) -> dict:
+    """Geocode ONE unmatched record: multi-benchmark sweep, then a single
+    normalized-street retry if it still missed. Returns a result dict. Pure and
+    self-contained (no shared mutable state), so it is safe to run in a thread.
+    """
+    uid = str(row[id_col])
+    addr = str(row[address_col])
+    result = geocode_single(addr, uid)
+
+    # If the raw address still did not match, retry once with a conservatively
+    # normalized variant. Normalization is STREET-only, applied to just the first
+    # comma-segment (the street) so the city/state/zip is left untouched. This
+    # only runs on already-failing records, so it cannot regress a good match.
+    if result["match_status"] == "No_Match":
+        normalized = _normalize_address_street(addr)
+        if normalized and normalized != addr:
+            retry = geocode_single(normalized, uid)
+            if retry["match_status"] != "No_Match":
+                result = retry
+    return result
+
+
 def geocode_fallback(
     unmatched_df: pd.DataFrame,
     address_col: str,
     id_col: str,
     delay: float = DEFAULT_FALLBACK_DELAY,
+    concurrency: int = 1,
 ) -> pd.DataFrame:
     """
     Run single-address geocoding for each unmatched record.
-    Rate-limited to be respectful of Census API guidelines.
 
     Parameters
     ----------
     unmatched_df : DataFrame of records not matched in the batch step.
     address_col  : Name of the column containing the address string.
     id_col       : Name of the unique identifier column.
-    delay        : Seconds to pause between requests.
+    delay        : Seconds to pause between requests in SEQUENTIAL mode only
+                   (concurrency <= 1). Ignored when running concurrently.
+    concurrency  : Number of single-address requests to run at once. Each request
+                   retries transient 429/5xx internally, so a rate limit is not
+                   turned into a false No_Match. Results are returned in the
+                   original input order regardless of completion order.
 
     Returns
     -------
@@ -479,33 +537,39 @@ def geocode_fallback(
         unique_id, latitude, longitude, match_status, matched_address,
         census_api_geoid
     """
-    results = []
     total = len(unmatched_df)
+    rows = [row for _, row in unmatched_df.iterrows()]
 
-    for i, (_, row) in enumerate(unmatched_df.iterrows()):
-        uid = str(row[id_col])
-        addr = str(row[address_col])
-        logger.info(f"  Fallback geocoding record {i + 1} of {total} (ID: {uid})...")
+    if concurrency <= 1:
+        results = []
+        for i, row in enumerate(rows):
+            logger.info(
+                f"  Fallback geocoding record {i + 1} of {total} "
+                f"(ID: {row[id_col]})..."
+            )
+            results.append(_fallback_one_record(row, address_col, id_col))
+            if i < total - 1:
+                time.sleep(delay)
+        return pd.DataFrame(results)
 
-        result = geocode_single(addr, uid)
-
-        # If the raw address still did not match, retry once with a
-        # conservatively normalized variant. Normalization is STREET-only, so
-        # we apply it to just the first comma-segment (the street) and leave the
-        # city/state/zip untouched — never feed the whole one-line address to
-        # the street normalizer. This only runs on already-failing records, so
-        # it cannot regress a good match.
-        if result["match_status"] == "No_Match":
-            normalized = _normalize_address_street(addr)
-            if normalized and normalized != addr:
-                retry = geocode_single(normalized, uid)
-                if retry["match_status"] != "No_Match":
-                    result = retry
-
-        results.append(result)
-        if i < total - 1:
-            time.sleep(delay)
-
+    # Concurrent: many independent I/O-bound single-address lookups at once.
+    logger.info(
+        f"  Fallback: geocoding {total} record(s) with {concurrency}-way "
+        "concurrency..."
+    )
+    results = [None] * total
+    done = 0
+    with ThreadPoolExecutor(max_workers=concurrency) as executor:
+        future_to_idx = {
+            executor.submit(_fallback_one_record, row, address_col, id_col): i
+            for i, row in enumerate(rows)
+        }
+        for future in as_completed(future_to_idx):
+            idx = future_to_idx[future]
+            results[idx] = future.result()
+            done += 1
+            if done % 100 == 0 or done == total:
+                logger.info(f"  Fallback progress: {done} of {total} done")
     return pd.DataFrame(results)
 
 

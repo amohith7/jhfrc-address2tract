@@ -6,6 +6,11 @@ data/reference/*
 !data/output/.gitkeep
 !data/reference/.gitkeep
 
+# Client PHI samples — never commit
+sample.zip
+sample/
+*.xlsx
+
 # Python
 __pycache__/
 *.py[cod]
