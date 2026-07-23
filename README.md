@@ -39,6 +39,15 @@ Do not include names, dates of birth, or any other personal information (see [Pr
 
 Keep the file you run through this tool limited to the unique identifier and address columns — nothing else. As a safety check, the tool inspects your **column names** (not the data itself) and **stops immediately** if it sees anything suggesting personal data (for example `name`, `dob`, `ssn`, `mrn`, `diagnosis`, `insurance`, `phone`, `email`, or `notes`). If that happens, remove those columns and run again.
 
+### Controlling what leaves your machine
+
+The tool runs entirely on your computer. The only time your addresses leave it is when a **geocoding service** turns them into coordinates — and that step is gated:
+
+- **Nothing is sent unless you pass `--approve-egress`.** Run without it first and the tool prints exactly what it *would* send and to which service, then exits having sent nothing.
+- The only possible destinations are the geocoders themselves: `geocoding.geo.census.gov` (US Census, always), and — only if you choose one — `api.geoapify.com`, `geocode.arcgis.com`, or `nominatim.openstreetmap.org`. The one-time tract-map download comes from `www2.census.gov`.
+- The tract assignment itself (matching a coordinate to its census tract) is **100% local** — it uses a map file on your disk and makes no network call.
+- Your file is **read and written only on your machine.** No results, telemetry, or data are sent anywhere else.
+
 ---
 
 ## Installation (first-time users only)
@@ -158,14 +167,18 @@ The Census retry and the free OpenStreetMap lookup are **on by default**, so a n
 
 | Option | Description |
 |---|---|
+| `--approve-egress` | **Required to allow any internet request.** Without it the tool sends nothing — it prints exactly what it *would* send and to which service, then exits. See [Controlling what leaves your machine](#controlling-what-leaves-your-machine). |
+| `--external-provider` | Which geocoder to use for the residual the Census cannot match: `nominatim` (free OpenStreetMap, small jobs only), `arcgis` (needs a token), or `geoapify` (free API key, good rural coverage). Overrides the config file. |
 | `--sheet-name` | The Excel sheet to read, if your workbook has more than one sheet. |
 | `--no-fallback` | Turn off the slower Census one-at-a-time retry. |
-| `--no-external-fallback` | Turn off the OpenStreetMap lookup (faster, but matches fewer). |
+| `--no-external-fallback` | Turn off the external geocoder lookup (faster, but matches fewer). |
 | `--retry-passes N` | How many extra times to re-try the still-unmatched rows within a run (default 2). The tool stops early once a pass recovers nothing. |
 | `--retry-failed` | Re-process only the `No_Match`/`Tie` rows of a **previous** result file and merge any new matches back in. See [Retrying addresses that did not match](#retrying-addresses-that-did-not-match). |
-| `--concurrency N` | How many Census batches to send at once (default 6). Only affects files large enough to span multiple batches. Set to `1` for one-at-a-time. |
+| `--concurrency N` | How many requests to send at once (default 6) — Census batches, the one-at-a-time retry, and the external geocoder all run in parallel. Set to `1` for fully sequential. |
 | `--chunk-size` | Rows per block for very large files. Set automatically; see [Processing Large Files](#processing-large-files). Use `0` to force a single pass. |
 | `--config` | Use a different settings file (default: `config/config.yaml`). |
+
+**Geocoder API keys** are read from environment variables so they never sit in a file: `export GEOAPIFY_KEY=...` (free key from geoapify.com) or `export ARCGIS_TOKEN=...`. Then run with `--external-provider geoapify` (or `arcgis`).
 
 </details>
 
@@ -239,7 +252,12 @@ To control the block size yourself, add `--chunk-size N` (or `--chunk-size 0` to
 
 **Time:** speed depends on the Census service. To go faster on large files the tool sends **several Census batches at once** (6 by default), so files that span many batches process substantially quicker than one-at-a-time; a rough planning figure is **1,000 addresses every 2 minutes**. Even so, a million records can take several hours to a day or more, so plan for a long or overnight run and rely on resume. Lower the parallelism with `--concurrency N` if you ever need to be gentler on the service.
 
-**Free-service caution:** the free OpenStreetMap lookup only runs on the residual the Census could not match, but even a few percent of a huge file is tens of thousands of requests, which OpenStreetMap's policy (one request per second, no bulk use) prohibits. So for files over 100,000 records the free lookup is disabled automatically, and in any run it is capped at 2,000 total requests. For a large residual, use a bulk-capable geocoder (ArcGIS with a token, via `external_provider: arcgis`, or a commercial service such as Geocodio or Smarty) — do not point the free service at bulk work. Contact JHFRC if you are unsure.
+**Free-service caution:** the default OpenStreetMap (`nominatim`) lookup only runs on the residual the Census could not match, but even a few percent of a huge file is tens of thousands of requests, which OpenStreetMap's policy (one request per second, no bulk use) prohibits. So for files over 100,000 records that free lookup is disabled automatically, and in any run it is capped at 2,000 total requests. For a large residual, choose a bulk-capable provider with `--external-provider`:
+
+- **`geoapify`** — free API key (3,000 requests/day, no credit card), good rural coverage. Set `export GEOAPIFY_KEY=...` first. A matched result is accepted only if its ZIP equals the input ZIP, so it never assigns a tract from a wrong-ZIP or city-centroid guess.
+- **`arcgis`** — needs a free ArcGIS developer token (`export ARCGIS_TOKEN=...`); highest coverage.
+
+Both are exempt from the free-service caps. Do not point the free `nominatim` service at bulk work. Contact JHFRC if you are unsure.
 
 ---
 
