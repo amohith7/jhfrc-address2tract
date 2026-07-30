@@ -580,6 +580,27 @@ def _process_frame(
             ext_mask = valid_df["match_status"].isin(["No_Match", "Tie"])
             ext_unmatched = valid_df[ext_mask].copy()
 
+            # Skip PO Box addresses: a PO box has no physical location, so no
+            # geocoder can place it. Sending it to an external (often token- or
+            # quota-metered) provider such as ArcGIS only wastes budget, so drop
+            # PO boxes from the external pass. They remain No_Match.
+            pobox_mask = (
+                ext_unmatched[ADDR_COL]
+                .fillna("")
+                .str.contains(
+                    r"\bP\.?\s*O\.?\s*BOX\b|\bPOST\s+OFFICE\s+BOX\b",
+                    case=False,
+                    regex=True,
+                )
+            )
+            if pobox_mask.any():
+                logger.info(
+                    f"External fallback: skipping {int(pobox_mask.sum())} PO Box "
+                    "address(es) (no physical location; left as No_Match, no "
+                    "geocoder quota used)."
+                )
+                ext_unmatched = ext_unmatched[~pobox_mask].copy()
+
             # Enforce the run-wide external budget. external_budget[0] is the
             # number of addresses still permitted to reach the free geocoder
             # across ALL chunks; it is shared, so many small chunks cannot add
