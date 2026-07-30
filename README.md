@@ -1,318 +1,116 @@
 # JHFRC Address to Census Tract Converter
 
-A simple tool that converts client or patient addresses into U.S. Census tract identifiers (GEOIDs). Developed by the Journey Health Foundation Research Center (JHFRC) for use by nonprofit partner organizations.
+Converts a file of addresses into U.S. Census tract IDs (GEOIDs), so JHFRC can link them to community data **without needing any names or personal details**. Built by the Journey Health Foundation Research Center for nonprofit partners.
 
 ---
 
-## Overview
+## What you need
 
-Census tracts are small, neighborhood-sized geographic areas. Converting your address records to Census tracts lets JHFRC link them to community data — such as income, education, and health indicators — without ever needing names or personal identifiers. This tool reads a file of addresses and returns the Census tract (GEOID) for each one.
+An Excel (`.xlsx`) or CSV file containing **only two things**:
 
----
+- a **unique ID** column (for example `client_id`), and
+- **address** columns — either one full-address column, or separate street, city, state, and ZIP columns.
 
-## Input Format
-
-Prepare an Excel (`.xlsx`) or CSV (`.csv`) file containing **only**:
-
-- **One unique identifier column** — a client ID or case number, consistent with your internal records.
-- **Address information** — either one full-address column, or separate columns for street, city, state, and ZIP.
-
-Do not include names, dates of birth, or any other personal information (see [Privacy](#privacy)). Addresses match best when they include the city, state, and ZIP.
-
-**One full-address column:**
-
-| client_id | full_address |
-|-----------|--------------|
-| 1001 | 123 Main St, Nashville, TN 37201 |
-| 1002 | 456 Elm Ave, Memphis, TN 38103 |
-
-**Separate columns:**
+Do **not** include names, birth dates, or any other personal information. As a safety check, the tool reads your **column names** and stops if it sees anything sensitive (`name`, `dob`, `ssn`, `phone`, `email`, etc.).
 
 | client_id | street | city | state | zip |
 |-----------|--------|------|-------|-----|
 | 1001 | 123 Main St | Nashville | TN | 37201 |
-| 1002 | 456 Elm Ave | Memphis | TN | 38103 |
 
 ---
 
-## Privacy
+## First-time setup (once)
 
-Keep the file you run through this tool limited to the unique identifier and address columns — nothing else. As a safety check, the tool inspects your **column names** (not the data itself) and **stops immediately** if it sees anything suggesting personal data (for example `name`, `dob`, `ssn`, `mrn`, `diagnosis`, `insurance`, `phone`, `email`, or `notes`). If that happens, remove those columns and run again.
+You need **Python 3.10 or later** ([python.org](https://www.python.org/downloads/); on Windows, tick **"Add Python to PATH"**).
 
-### Controlling what leaves your machine
-
-The tool runs entirely on your computer. The only time your addresses leave it is when a **geocoding service** turns them into coordinates — and that step is gated:
-
-- **Nothing is sent unless you pass `--approve-egress`.** Run without it first and the tool prints exactly what it *would* send and to which service, then exits having sent nothing.
-- The only possible destinations are the geocoders themselves: `geocoding.geo.census.gov` (US Census, always), and — only if you choose one — `api.geoapify.com`, `geocode.arcgis.com`, or `nominatim.openstreetmap.org`. The one-time tract-map download comes from `www2.census.gov`.
-- The tract assignment itself (matching a coordinate to its census tract) is **100% local** — it uses a map file on your disk and makes no network call.
-- Your file is **read and written only on your machine.** No results, telemetry, or data are sent anywhere else.
-
----
-
-## Installation (first-time users only)
-
-**Already set up the tool before?** Skip this section and go straight to [Step 1](#running-the-application).
-
-This is a one-time setup, done the first time you use the tool. After completing it once, you only repeat Step 1–4 in [Running the Application](#running-the-application) for each new file.
-
-### Prerequisites
-
-You need **Python 3.10 or later**. To check, open a terminal — on **Windows**, press the Windows key, type `cmd`, and press **Enter**; on **Mac**, press **Command + Space**, type `Terminal`, and press **Enter** — then type:
-
-```
-python --version
-```
-
-If you see a version like `Python 3.11.2`, you are ready. Otherwise, install it from [python.org](https://www.python.org/downloads/) (on Windows, check **"Add Python to PATH"** during installation).
-
-### Download the project
-
-On the project's GitHub page, click the green **Code** button → **Download ZIP**, then extract it (right-click → **Extract All** on Windows, or double-click on Mac). Note where the folder is saved.
-
-### Open a terminal inside the project folder
-
-- **Windows:** open the project folder in File Explorer, click the address bar, type `cmd`, and press **Enter**.
-- **Mac:** open **Terminal**, type `cd ` (with a trailing space), drag the project folder into the window, and press **Enter**.
-
-To confirm you are in the right place, type `dir` (Windows) or `ls` (Mac). You should see `main.py` and `requirements.txt`.
-
-### Create a virtual environment (recommended)
-
-This keeps the tool's software separate from other programs. Type:
-
-```
-python -m venv .venv
-```
-
-Then activate it:
-
-- **Windows (Command Prompt):** `.venv\Scripts\activate`
-- **Windows (PowerShell):** `.venv\Scripts\Activate.ps1`
-- **Mac / Linux:** `source .venv/bin/activate`
-
-You will see `(.venv)` at the start of your prompt. Activate it again in each new terminal window.
-
-### Install required packages
-
-```
-pip install -r requirements.txt
-```
-
-This runs once and takes a minute or two. When it finishes, you are ready.
+1. Download this project: green **Code** button → **Download ZIP**, then unzip it.
+2. Open a terminal **inside the project folder**:
+   - **Windows:** open the folder in File Explorer, click the address bar, type `cmd`, press Enter.
+   - **Mac:** open Terminal, type `cd ` (with a space), drag the folder in, press Enter.
+3. Install the requirements:
+   ```
+   pip install -r requirements.txt
+   ```
 
 ---
 
-## Running the Application
+## How to run it
 
-Repeat these four steps each time you have a file to process.
+**1. Make a safe input file.** Don't use your original records. Create a new file with **only** the ID and address columns and save it in `data/input/` (for example `data/input/clients.xlsx`).
 
-### Step 1: Create a separate file with only the ID and address columns
+**2. Run one command** (all on one line). Use the version that matches your file:
 
-Do **not** run this tool on your original records. First, create a **new, empty Excel file** and copy into it **only two things**:
-
-- your **unique identifier** column (for example `client_id`), and
-- your **address** column(s) — either one full-address column, or separate street, city, state, and ZIP columns.
-
-Do not include names, dates of birth, phone numbers, or any other personal information. Keeping this file limited to the identifier and address is what prevents any PHI or PII from reaching the tool. (Later, in Step 4, you will match the results back to your own records using the unique identifier.)
-
-Save this new file into the `data/input/` folder inside the project — for example, `data/input/clients.xlsx`.
-
-### Step 2: Run one command
-
-In your terminal (opened inside the project folder), type **one** of the commands below and press **Enter**. Type it all on a single line.
-
-**If your file has ONE column that holds the whole address** (for example a column named `full_address`):
-
+Separate street / city / state / ZIP columns:
 ```
-python main.py --input data/input/clients.xlsx --output data/output/results.xlsx --id-column client_id --address-column full_address
+python main.py --input data/input/clients.xlsx --output data/output/results.xlsx --id-column client_id --street-column street --city-column city --state-column state --zip-column zip --approve-egress
 ```
 
-**If your file has SEPARATE columns for street, city, state, and ZIP:**
-
+One full-address column:
 ```
-python main.py --input data/input/clients.xlsx --output data/output/results.xlsx --id-column client_id --street-column street --city-column city --state-column state --zip-column zip
-```
-
-Change the names in the command to match your file:
-
-- `data/input/clients.xlsx` — the name of **your** input file.
-- `data/output/results.xlsx` — the name you want for the **result** file.
-- `client_id` — the column that holds your unique ID for each row.
-- `full_address` (or `street` / `city` / `state` / `zip`) — your address column(s).
-
-That is all you need to change. The tool automatically tries every method to match as many addresses as possible, including a free OpenStreetMap lookup for hard-to-find addresses.
-
-### Step 3: Get your results and check the match rate
-
-When it finishes, open the result file (for example `data/output/results.xlsx`). It contains your original columns plus the Census tract for each address — see [Output Columns](#understanding-the-output-columns) below.
-
-When the tool finishes, it prints a short **summary** in the terminal, including a line like:
-
-```
-Matched total : 995  (99.5%)
-Unmatched     : 5    (0.5%)
+python main.py --input data/input/clients.xlsx --output data/output/results.xlsx --id-column client_id --address-column full_address --approve-egress
 ```
 
-The result file itself does not show this percentage — it shows each address's status in the `match_status` column (unmatched rows say `No_Match`). To see the percentage, read the terminal summary, or filter the `match_status` column in Excel.
+Change the file names and column names to match your file. `--approve-egress` confirms it's OK to look up the addresses online — the tool contacts nothing without it.
 
-**Please report a high No_Match rate.** A few unmatched addresses is normal, but if a large share come back `No_Match` (roughly **more than 10%**), email JHFRC at **mohith-addepalli@utc.edu** with a few example addresses so we can look into it. The tool also prints a reminder when the unmatched rate is above 10%.
+*First run only:* it downloads the official Census map (~55 MB, once). After that, about 1,000 addresses take roughly 2 minutes.
 
-**What to expect while it runs:** the **first run** downloads the official Census map file (about 55 MB, once only). After that, a typical file of 1,000 addresses finishes in **about 2 minutes**. You will see progress messages, then the summary.
+**3. Check the results.** Open the output file — it has your columns plus the Census tract. The terminal prints a summary like `Matched total : 995 (99.5%)`. A few unmatched rows is normal; if more than ~10% are `No_Match`, email us a few examples.
 
-<details>
-<summary>Advanced options (most people do not need these)</summary>
-
-The Census retry and the free OpenStreetMap lookup are **on by default**, so a normal run already gets the highest match rate. These flags only change that:
-
-| Option | Description |
-|---|---|
-| `--approve-egress` | **Required to allow any internet request.** Without it the tool sends nothing — it prints exactly what it *would* send and to which service, then exits. See [Controlling what leaves your machine](#controlling-what-leaves-your-machine). |
-| `--external-provider` | Which geocoder to use for the residual the Census cannot match: `nominatim` (free OpenStreetMap, small jobs only), `arcgis` (needs a token), or `geoapify` (free API key, good rural coverage). Overrides the config file. |
-| `--zip-approx` | Last resort: after all geocoding, give any still-unmatched row an **approximate** tract from its ZIP's centroid (marked `Matched_ZIP_Approx`). Coarse — a ZIP spans many tracts — so use only when an approximate location is better than none. Off by default. |
-| `--sheet-name` | The Excel sheet to read, if your workbook has more than one sheet. |
-| `--no-fallback` | Turn off the slower Census one-at-a-time retry. |
-| `--no-external-fallback` | Turn off the external geocoder lookup (faster, but matches fewer). |
-| `--retry-passes N` | How many extra times to re-try the still-unmatched rows within a run (default 2). The tool stops early once a pass recovers nothing. |
-| `--retry-failed` | Re-process only the `No_Match`/`Tie` rows of a **previous** result file and merge any new matches back in. See [Retrying addresses that did not match](#retrying-addresses-that-did-not-match). |
-| `--concurrency N` | How many requests to send at once (default 6) — Census batches, the one-at-a-time retry, and the external geocoder all run in parallel. Set to `1` for fully sequential. |
-| `--chunk-size` | Rows per block for very large files. Set automatically; see [Processing Large Files](#processing-large-files). Use `0` to force a single pass. |
-| `--config` | Use a different settings file (default: `config/config.yaml`). |
-
-**Geocoder API keys** can be supplied per run on the command line — `--arcgis-token …` or `--geoapify-key …` — or via an environment variable (`export ARCGIS_TOKEN=…` / `export GEOAPIFY_KEY=…`). Precedence is: command-line flag, then environment variable, then config file. ArcGIS tokens are usually **temporary** (they expire), so pass one per run with `--arcgis-token` rather than storing it in the config file. Then run with `--external-provider arcgis` (or `geoapify`).
-
-</details>
-
-### Step 4: Add the Census tract back into your file (VLOOKUP / XLOOKUP)
-
-After you run the tool, its result file lists each **unique identifier** with its **`census_tract_geoid`**. This step uses a lookup on that unique identifier to copy the Census tract back into your own file. Both files must share the **same unique-identifier column** (for example `client_id`) — that is what Excel matches on. In the formulas below, wherever the example says `results.xlsx`, use the actual name of the result file you created.
-
-**Before you begin — preserve leading zeros.** Census tract identifiers are text, not numbers, and some begin with a leading zero (for example Alabama tracts begin with `01`). To stop Excel dropping that zero, format the destination column as **Text** first (**Home → Number Format → Text**).
-
-**How to do it:**
-
-- Open **both** files: your own file and the result file the tool created.
-- In your file, click the empty cell in the first data row of the column where you want the Census tract (this example assumes row 2).
-- Enter **one** of the formulas below, press **Enter**, and copy it down the column.
-
-**Microsoft 365 or Excel 2021+ (recommended — `XLOOKUP`):** if your unique ID is in `A2`, and the result file has `client_id` in column A and `census_tract_geoid` in column G:
-
+**4. Merge the tracts back into your own file.** The result file lists each ID with its `census_tract_geoid`. In your own file, look it up by ID:
 ```
 =XLOOKUP(A2, [results.xlsx]Sheet1!$A:$A, [results.xlsx]Sheet1!$G:$G, "Not found")
 ```
-
-**Older Excel (`VLOOKUP`):** counting columns from the identifier (A=1 … G=7):
-
-```
-=VLOOKUP(A2, [results.xlsx]Sheet1!$A:$H, 7, FALSE)
-```
-
-Replace `7` with the actual position of `census_tract_geoid` counted from your identifier column, and keep `FALSE` so Excel requires an exact match.
-
-**Notes:**
-
-- Open the result file to confirm which column letter holds `census_tract_geoid`; its position shifts with the number of address columns.
-- An ID in your file but not in the result file shows `Not found` (XLOOKUP) or `#N/A` (VLOOKUP) — that record simply was not in the file you processed.
-- When done, you can **copy the column and paste it back as Values** (Home → Paste → Values) so the tracts stay after the result file is closed.
+(Adjust the column letters to where your ID and `census_tract_geoid` sit.) Tract IDs are text and some start with `0`, so format the destination column as **Text** first (Home → Number Format → Text) so Excel keeps the leading zero.
 
 ---
 
-## Retrying addresses that did not match
+## Your results file
 
-A normal run already retries unmatched addresses several times on its own, so most files need nothing further. But if a run was interrupted, or the Census service was briefly having trouble, you can re-try **only** the addresses that came back `No_Match` or `Tie` — without re-processing the ones that already matched:
+Your original columns, plus:
 
-```
-python main.py --retry-failed \
-  --input data/output/results.xlsx \
-  --output data/output/results_retry.xlsx \
-  --id-column client_id \
-  --street-column street --city-column city --state-column state --zip-column zip
-```
+| Column | Meaning |
+|--------|---------|
+| `census_tract_geoid` | The 11-digit Census tract (e.g. `47065001600`). Blank if not matched. |
+| `match_status` | Any `Matched…` value means it got a tract. `No_Match`, `Tie`, and `Rejected` are the ones to review. |
+| `error_reason` | Plain-language reason a row was not matched. |
 
-- The **input** is a **result file the tool made earlier** (not your original address list). Point `--output` at a new file name so your first result is preserved.
-- Only the `No_Match`/`Tie` rows are looked up again; every already-matched row is copied through unchanged.
-- The new file has the same columns as the old one, now with any recovered Census tracts filled in.
-- Use the same column names you used on the first run. Each row must still have a unique identifier (the tool stops if the identifier column has duplicates).
+For the best match rate, include the full city, state, and ZIP in every address.
 
 ---
 
-## Processing Large Files
+## Sharing results with JHFRC
 
-The tool handles files of any size and adjusts automatically — you do not change the command.
+Send only the **output file**. Confirm it contains just the ID, address, and Census tract columns — no names or personal data.
 
-| Approximate size | What happens |
-|---|---|
-| Up to 50,000 records | Processed in a single pass. |
-| Over 50,000 records | Switches to **chunked processing** (blocks of 50,000) so memory stays bounded. Blocks are written as numbered part files and combined at the end. |
-| Over 100,000 records | The **free OpenStreetMap lookup is turned off** for the run to avoid overloading a free public service (the Census steps still run). A bulk-capable provider such as ArcGIS is not affected. |
-| Over 1,048,576 records | Output is written as **CSV** (Excel's row limit). If you asked for `.xlsx`, the tool saves `.csv` and reports the name. |
+## Help
 
-To control the block size yourself, add `--chunk-size N` (or `--chunk-size 0` to force a single pass).
-
-**Resuming an interrupted run:** if a long run stops partway, run the exact same command again — completed blocks are skipped and never duplicated. Part files are kept in a `<output>_parts` folder; delete it once the result looks correct.
-
-**Time:** speed depends on the Census service. To go faster on large files the tool sends **several Census batches at once** (6 by default), so files that span many batches process substantially quicker than one-at-a-time; a rough planning figure is **1,000 addresses every 2 minutes**. Even so, a million records can take several hours to a day or more, so plan for a long or overnight run and rely on resume. Lower the parallelism with `--concurrency N` if you ever need to be gentler on the service.
-
-**Free-service caution:** the default OpenStreetMap (`nominatim`) lookup only runs on the residual the Census could not match, but even a few percent of a huge file is tens of thousands of requests, which OpenStreetMap's policy (one request per second, no bulk use) prohibits. So for files over 100,000 records that free lookup is disabled automatically, and in any run it is capped at 2,000 total requests. For a large residual, choose a bulk-capable provider with `--external-provider`:
-
-- **`geoapify`** — free API key (3,000 requests/day, no credit card), good rural coverage. Set `export GEOAPIFY_KEY=...` first. A matched result is accepted only if its ZIP equals the input ZIP, so it never assigns a tract from a wrong-ZIP or city-centroid guess.
-- **`arcgis`** — needs a free ArcGIS developer token (`export ARCGIS_TOKEN=...`); highest coverage.
-
-Both are exempt from the free-service caps. Do not point the free `nominatim` service at bulk work. Contact JHFRC if you are unsure.
+Questions, errors, or a high `No_Match` rate: email **mohith-addepalli@utc.edu** with a few example addresses and any error message shown.
 
 ---
-
-## Understanding the Output Columns
-
-The output file includes your original columns plus:
-
-| Column | Description |
-|---|---|
-| `cleaned_address` | The standardized address returned by the geocoder. Blank if not matched. |
-| `census_tract_geoid` | The 11-digit Census tract identifier (e.g., `47065001600`). Blank if not matched. |
-| `match_status` | How the address was matched, or why it was not (see below). |
-| `error_reason` | Plain-language explanation for any address that was not matched. |
-
-Any status beginning with `Matched` means the address **got a Census tract** — nothing further is needed. The ones to review are `No_Match`, `Tie`, and `Rejected`.
-
-| Value | Got a tract? | Meaning |
-|---|---|---|
-| `Matched` | Yes | Matched directly on the first, fastest pass. |
-| `Matched_Fallback` | Yes | Matched after the tool retried the address individually. |
-| `Matched_External` | Yes | Not in the Census database; found via the free OpenStreetMap lookup, then placed in a tract. |
-| `Matched_CensusAPI_Backup` | Yes | Rare case where the tract came directly from the Census service. |
-| `Matched_ZIP_Approx` | Approximate | Only when `--zip-approx` is on: no geocoder could place the address, so the tract is a coarse estimate from the ZIP's centroid. **Not a precise location** — treat as approximate. |
-| `Tie` | No | Ambiguous (more than one possible match). Add detail (e.g. the full ZIP) and run again. |
-| `No_Match` | No | Not found by any method. Check for typos, or the address may be too new. |
-| `Rejected` | No | The row was missing its ID or address and was skipped. |
-
 ---
 
-## Sharing Results with JHFRC
+## Advanced options (technical users)
 
-Share only the **output file** (not your original records). Before sending, confirm it contains only the unique identifier, address, and Census tract columns — no names, medical identifiers, or other personal information — and that the IDs match your internal records. If you are unsure whether the file is ready, contact us first.
+A normal run already uses Census plus a free OpenStreetMap fallback and gets the highest match rate. The following are for larger or harder jobs.
 
----
+**Network control.** Nothing is sent until you pass `--approve-egress`; without it the tool prints exactly what it *would* send, then exits. The only destinations are the geocoders (`geocoding.geo.census.gov`, plus `api.geoapify.com` / `geocode.arcgis.com` / `nominatim.openstreetmap.org` if selected) and the one-time Census map download. Tract assignment is fully local; nothing goes anywhere else.
 
-## Troubleshooting
+**Stronger geocoders for the residual** (`--external-provider`):
+- `geoapify` — free API key (3,000/day); accepts a match only if its ZIP equals the input ZIP.
+- `arcgis` — needs a token; best coverage.
 
-**"The following columns were not found in the input file"**
-Check that the column names you passed (`--id-column`, `--address-column`, etc.) exactly match your file. Column names are case-sensitive.
+Supply keys per run with `--arcgis-token` / `--geoapify-key`, or via the `ARCGIS_TOKEN` / `GEOAPIFY_KEY` environment variables (preferred for temporary ArcGIS tokens), or config. Precedence: flag → env var → config.
 
-**"The input file contains column(s) that may include sensitive personal information"**
-Remove any columns with names, dates of birth, contact information, or other personal data, then run again.
+**Other flags:**
 
-**"Failed to download the Census tract dataset"**
-Check your internet connection. If it continues, contact us.
+| Flag | What it does |
+|------|--------------|
+| `--zip-approx` | Last resort: give any still-unmatched row an **approximate** tract from its ZIP centroid (marked `Matched_ZIP_Approx`). Coarse — a ZIP spans many tracts. |
+| `--retry-failed` | Re-process only the `No_Match`/`Tie` rows of a previous result file and merge new matches back in. |
+| `--concurrency N` | Requests sent in parallel (default 6). |
+| `--no-fallback` / `--no-external-fallback` | Turn off the Census one-at-a-time retry / the external lookup. |
+| `--sheet-name` / `--chunk-size` / `--config` | Excel sheet to read / rows per block / alternate settings file. |
 
-**Many records show "No_Match"**
-Usually the addresses are incomplete or unusually formatted. Include the full city, state, and ZIP. A few very new or unusual addresses may still not match.
+**Large files.** Over 50,000 rows the tool auto-chunks and is resumable — rerun the same command to continue. Over 100,000 rows the free OpenStreetMap fallback auto-disables (use `--external-provider arcgis`/`geoapify` for large residuals). Over ~1,048,576 rows the output is written as CSV.
 
-**The tool runs but produces no output**
-Confirm you can write to the `data/output/` folder, and that the `--output` name ends in `.xlsx` or `.csv`.
-
----
-
-## Technical Support
-
-For questions or issues, contact **mohith-addepalli@utc.edu**. Please include a description of the problem and any error message shown.
+**All `match_status` values:** `Matched`, `Matched_Fallback`, `Matched_External`, `Matched_CensusAPI_Backup`, `Matched_ZIP_Approx` (approximate), `Tie`, `No_Match`, `Rejected`.
