@@ -54,7 +54,12 @@ Change the file names and column names to match your file. `--approve-egress` co
 
 *First run only:* it downloads the official Census map (~55 MB, once). After that, about 1,000 addresses take roughly 2 minutes.
 
-**3. Check the results.** Open the output file — it has your columns plus the Census tract. The terminal prints a summary like `Matched total : 995 (99.5%)`. A few unmatched rows is normal; if more than ~10% are `No_Match`, email us a few examples.
+**3. Check the match rate and send us the numbers.** Open the output file (your columns plus the Census tract). The terminal prints a summary like `Matched total : 980 (98%) | Unmatched : 20` — **send JHFRC those numbers (just the counts, not the file), and pause here.** Based on your unmatched rate we'll advise whether a follow-up step is worth it:
+
+- if many are unmatched, we'll send a **temporary ArcGIS token** to recover most of the rest;
+- if only a few remain, we'll have you add `--zip-approx` to fill an *approximate* tract for them.
+
+Please check with us first rather than adding those options on your own, so we only add what's needed.
 
 **4. Merge the tracts back into your own file.** The result file lists each ID with its `census_tract_geoid`. In your own file, look it up by ID:
 ```
