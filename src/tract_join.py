@@ -7,6 +7,7 @@ Performs spatial joins to assign a Census tract GEOID to each geocoded address.
 
 from __future__ import annotations
 
+import io
 import shutil
 import zipfile
 import logging
@@ -33,6 +34,54 @@ TRACT_GPKG_NAME = "census_tracts.gpkg"
 TIGER_GPKG_NAME = "census_tracts_tiger.gpkg"
 TRACT_LAYER = "census_tracts"
 DEFAULT_REFERENCE_DIR = Path("data/reference")
+
+# Census ZCTA (ZIP Code Tabulation Area) Gazetteer file: one population-weighted
+# centroid per ZCTA. Used to assign an APPROXIMATE tract to addresses no geocoder
+# could place, via the centroid of the address's ZIP.
+ZCTA_GAZ_URL = (
+    "https://www2.census.gov/geo/docs/maps-data/data/gazetteer/"
+    "2024_Gazetteer/2024_Gaz_zcta_national.zip"
+)
+ZCTA_CENTROID_CACHE = "zcta_centroids.csv"
+
+
+def get_zcta_centroids(reference_dir: str = "data/reference") -> dict:
+    """
+    Return a mapping {zcta5: (lat, lon)} of ZIP/ZCTA centroids.
+
+    Downloads the Census ZCTA Gazetteer file once and caches a trimmed CSV in
+    reference_dir, so later runs need no network. Used only as a last-resort
+    approximation (a ZIP spans many tracts); dedicated PO-box ZIPs that have no
+    ZCTA are simply absent from the mapping.
+    """
+    ref = Path(reference_dir)
+    ref.mkdir(parents=True, exist_ok=True)
+    cache = ref / ZCTA_CENTROID_CACHE
+
+    if cache.exists():
+        df = pd.read_csv(cache, dtype=str)
+    else:
+        logger.info("Downloading Census ZCTA centroid file (one-time)...")
+        resp = requests.get(ZCTA_GAZ_URL, timeout=300)
+        resp.raise_for_status()
+        with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
+            name = next(n for n in zf.namelist() if n.lower().endswith(".txt"))
+            with zf.open(name) as fh:
+                raw = pd.read_csv(fh, sep="\t", dtype=str)
+        raw.columns = [c.strip() for c in raw.columns]
+        df = raw[["GEOID", "INTPTLAT", "INTPTLONG"]].copy()
+        df["INTPTLAT"] = df["INTPTLAT"].str.strip()
+        df["INTPTLONG"] = df["INTPTLONG"].str.strip()
+        df.to_csv(cache, index=False)
+        logger.info(f"Cached {len(df):,} ZCTA centroids to {cache}.")
+
+    centroids: dict = {}
+    for geoid, lat, lon in zip(df["GEOID"], df["INTPTLAT"], df["INTPTLONG"]):
+        try:
+            centroids[str(geoid).zfill(5)] = (float(lat), float(lon))
+        except (TypeError, ValueError):
+            continue
+    return centroids
 
 
 def get_tract_dataset(
