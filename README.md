@@ -169,6 +169,7 @@ The Census retry and the free OpenStreetMap lookup are **on by default**, so a n
 |---|---|
 | `--approve-egress` | **Required to allow any internet request.** Without it the tool sends nothing — it prints exactly what it *would* send and to which service, then exits. See [Controlling what leaves your machine](#controlling-what-leaves-your-machine). |
 | `--external-provider` | Which geocoder to use for the residual the Census cannot match: `nominatim` (free OpenStreetMap, small jobs only), `arcgis` (needs a token), or `geoapify` (free API key, good rural coverage). Overrides the config file. |
+| `--zip-approx` | Last resort: after all geocoding, give any still-unmatched row an **approximate** tract from its ZIP's centroid (marked `Matched_ZIP_Approx`). Coarse — a ZIP spans many tracts — so use only when an approximate location is better than none. Off by default. |
 | `--sheet-name` | The Excel sheet to read, if your workbook has more than one sheet. |
 | `--no-fallback` | Turn off the slower Census one-at-a-time retry. |
 | `--no-external-fallback` | Turn off the external geocoder lookup (faster, but matches fewer). |
@@ -280,6 +281,7 @@ Any status beginning with `Matched` means the address **got a Census tract** —
 | `Matched_Fallback` | Yes | Matched after the tool retried the address individually. |
 | `Matched_External` | Yes | Not in the Census database; found via the free OpenStreetMap lookup, then placed in a tract. |
 | `Matched_CensusAPI_Backup` | Yes | Rare case where the tract came directly from the Census service. |
+| `Matched_ZIP_Approx` | Approximate | Only when `--zip-approx` is on: no geocoder could place the address, so the tract is a coarse estimate from the ZIP's centroid. **Not a precise location** — treat as approximate. |
 | `Tie` | No | Ambiguous (more than one possible match). Add detail (e.g. the full ZIP) and run again. |
 | `No_Match` | No | Not found by any method. Check for typos, or the address may be too new. |
 | `Rejected` | No | The row was missing its ID or address and was skipped. |

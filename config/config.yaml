@@ -46,6 +46,14 @@ tract_source: cb500k
 # --no-external-fallback flag or by setting this to false.
 use_external_fallback: true
 
+# ZIP-approximate last-resort fallback (off by default). After ALL geocoding,
+# assign an APPROXIMATE tract to any still-unmatched row from the centroid of its
+# ZIP (Census ZCTA). Coarse — a ZIP spans many tracts — so these rows are labeled
+# match_status = "Matched_ZIP_Approx" and carry an "approximate" note. Enable per
+# run with the --zip-approx flag or by setting this to true. Rows whose ZIP has
+# no ZCTA (some dedicated PO-box ZIPs) stay No_Match.
+use_zip_approx: false
+
 
 # Geocoder settings
 geocoder:
