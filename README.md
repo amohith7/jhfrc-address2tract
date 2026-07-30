@@ -178,7 +178,7 @@ The Census retry and the free OpenStreetMap lookup are **on by default**, so a n
 | `--chunk-size` | Rows per block for very large files. Set automatically; see [Processing Large Files](#processing-large-files). Use `0` to force a single pass. |
 | `--config` | Use a different settings file (default: `config/config.yaml`). |
 
-**Geocoder API keys** are read from environment variables so they never sit in a file: `export GEOAPIFY_KEY=...` (free key from geoapify.com) or `export ARCGIS_TOKEN=...`. Then run with `--external-provider geoapify` (or `arcgis`).
+**Geocoder API keys** can be supplied per run on the command line — `--arcgis-token …` or `--geoapify-key …` — or via an environment variable (`export ARCGIS_TOKEN=…` / `export GEOAPIFY_KEY=…`). Precedence is: command-line flag, then environment variable, then config file. ArcGIS tokens are usually **temporary** (they expire), so pass one per run with `--arcgis-token` rather than storing it in the config file. Then run with `--external-provider arcgis` (or `geoapify`).
 
 </details>
 
