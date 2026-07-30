@@ -39,7 +39,7 @@ from geocode import (
     DEFAULT_CONCURRENCY,
 )
 from geocode_external import geocode_external
-from tract_join import get_tract_dataset, join_points_to_tracts
+from tract_join import get_tract_dataset, join_points_to_tracts, get_zcta_centroids
 from utils.io import (
     read_input,
     write_output,
@@ -179,6 +179,17 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--zip-approx",
+        action="store_true",
+        help=(
+            "Last-resort fallback: after all geocoding, assign an APPROXIMATE "
+            "tract to any still-unmatched row from its ZIP/ZCTA centroid "
+            "(labeled Matched_ZIP_Approx). Coarse (a ZIP spans many tracts); off "
+            "by default. Downloads a small Census ZCTA file once (needs "
+            "--approve-egress the first time)."
+        ),
+    )
+    parser.add_argument(
         "--chunk-size",
         type=int,
         default=None,
@@ -258,9 +269,14 @@ def _print_summary(
     matched_external: int,
     unmatched: int,
     rejected: int,
+    matched_zip_approx: int = 0,
 ) -> None:
     total_matched = (
-        matched_gpkg + matched_api_backup + matched_fallback + matched_external
+        matched_gpkg
+        + matched_api_backup
+        + matched_fallback
+        + matched_external
+        + matched_zip_approx
     )
     match_pct = (100.0 * total_matched / total) if total else 0.0
     unmatched_pct = (100.0 * unmatched / total) if total else 0.0
@@ -274,6 +290,8 @@ def _print_summary(
     print(f"  Matched — Census API (backup) : {matched_api_backup:,}")
     print(f"  Matched — Census fallback     : {matched_fallback:,}")
     print(f"  Matched — External geocoder   : {matched_external:,}")
+    if matched_zip_approx:
+        print(f"  Matched — ZIP approx (coarse) : {matched_zip_approx:,}")
     print(f"  Unmatched                     : {unmatched:,}")
     print(f"  Rejected (missing data)       : {rejected:,}")
     print("-" * 56)
@@ -308,6 +326,7 @@ def _tally(status: pd.Series) -> dict:
         "matched_api_backup": int((s == "Matched_CensusAPI_Backup").sum()),
         "matched_fallback": int((s == "Matched_Fallback").sum()),
         "matched_external": int((s == "Matched_External").sum()),
+        "matched_zip_approx": int((s == "Matched_ZIP_Approx").sum()),
         "unmatched": int(s.isin(["No_Match", "Tie"]).sum()),
     }
 
@@ -388,6 +407,64 @@ def _census_fallback_pass(
     return valid_df, len(newly_matched)
 
 
+def _zip_approx_pass(
+    valid_df: pd.DataFrame, tracts, args, config: dict, logger: logging.Logger,
+) -> tuple:
+    """Last-resort fallback (runs AFTER all geocoding): assign an APPROXIMATE
+    tract to rows no geocoder could place, using the centroid of the address's
+    ZIP (its Census ZCTA). Labeled 'Matched_ZIP_Approx'. This is coarse — a ZIP
+    spans many tracts — so it is a flagged approximation, not a precise location.
+    Rows whose ZIP has no ZCTA (e.g. some dedicated PO-box ZIPs) stay No_Match.
+    Returns (valid_df, number_assigned).
+    """
+    if not args.zip_column:
+        logger.info("ZIP-approx skipped: no --zip-column configured.")
+        return valid_df, 0
+    mask = valid_df["match_status"].isin(["No_Match", "Tie"])
+    if not mask.any():
+        return valid_df, 0
+    try:
+        centroids = get_zcta_centroids(config.get("reference_dir", "data/reference"))
+    except Exception as e:
+        logger.warning(f"ZIP-approx skipped: could not load ZCTA centroids ({e}).")
+        return valid_df, 0
+
+    todo_idx = list(valid_df.index[mask])
+    z5 = (
+        valid_df.loc[todo_idx, args.zip_column]
+        .fillna("")
+        .astype(str)
+        .str.extract(r"(\d{5})")[0]
+    )
+    sub_idx, lats, lons = [], [], []
+    for idx in todo_idx:
+        z = z5.get(idx)
+        coord = centroids.get(z) if z else None
+        if coord:
+            sub_idx.append(idx)
+            lats.append(coord[0])
+            lons.append(coord[1])
+    if not sub_idx:
+        logger.info("ZIP-approx: no still-unmatched rows have a known ZCTA centroid.")
+        return valid_df, 0
+
+    logger.info(
+        f"ZIP-approx: assigning an approximate tract to {len(sub_idx)} "
+        "still-unmatched row(s) via ZIP/ZCTA centroid (Matched_ZIP_Approx)..."
+    )
+    pts = pd.DataFrame({"latitude": lats, "longitude": lons})
+    joined = join_points_to_tracts(pts, tracts)  # preserves row order
+    geoids = list(joined["census_tract_geoid"])
+    n = 0
+    for idx, geoid in zip(sub_idx, geoids):
+        if pd.notna(geoid) and str(geoid) not in ("", "nan"):
+            valid_df.at[idx, "census_tract_geoid"] = geoid
+            valid_df.at[idx, "match_status"] = "Matched_ZIP_Approx"
+            n += 1
+    logger.info(f"ZIP-approx: assigned {n} approximate tract(s).")
+    return valid_df, n
+
+
 def _process_frame(
     df: pd.DataFrame,
     tracts,
@@ -395,6 +472,7 @@ def _process_frame(
     config: dict,
     use_fallback: bool,
     use_external_fallback: bool,
+    use_zip_approx: bool,
     external_budget: list,
     concurrency: int,
     retry_passes: int,
@@ -692,6 +770,14 @@ def _process_frame(
             valid_df[col] = pd.Series([None] * len(valid_df), index=valid_df.index)
 
     # ------------------------------------------------------------------
+    # 9c. ZIP-approximate fallback (LAST resort, after all geocoding incl.
+    #     external). Assigns a coarse tract from the ZIP/ZCTA centroid to rows
+    #     nothing else could place. Labeled Matched_ZIP_Approx.
+    # ------------------------------------------------------------------
+    if use_zip_approx:
+        valid_df, _ = _zip_approx_pass(valid_df, tracts, args, config, logger)
+
+    # ------------------------------------------------------------------
     # 10. Set error reasons
     # ------------------------------------------------------------------
     valid_df["error_reason"] = None
@@ -699,6 +785,14 @@ def _process_frame(
     # Any record still No_Match or Tie after all fallbacks could not be geocoded.
     no_coords = valid_df["match_status"].isin(["No_Match", "Tie"])
     valid_df.loc[no_coords, "error_reason"] = "Address could not be geocoded"
+
+    # ZIP-approximate rows carry a note so they are never mistaken for a precise
+    # geocode.
+    zip_approx = valid_df["match_status"] == "Matched_ZIP_Approx"
+    valid_df.loc[zip_approx, "error_reason"] = (
+        "Approximate: tract assigned from the ZIP/ZCTA centroid, not an exact "
+        "geocode"
+    )
 
     matched_but_no_tract = (
         valid_df["match_status"].isin(
@@ -776,6 +870,7 @@ def _run_retry_mode(
     address_columns: list,
     use_fallback: bool,
     use_external_fallback: bool,
+    use_zip_approx: bool,
     external_is_free_public: bool,
     external_max_residual: int,
     concurrency: int,
@@ -890,6 +985,7 @@ def _run_retry_mode(
         config,
         use_fallback,
         use_external_fallback,
+        use_zip_approx,
         external_budget,
         concurrency,
         retry_passes,
@@ -969,7 +1065,8 @@ def main() -> None:
             }.get(provider, provider)
             print(f"    - {dest}   (external fallback for the residual)")
         print("    - www2.census.gov   (one-time tract-map download, only if")
-        print("      the local tract file is missing)")
+        print("      the local tract file is missing; also the ZCTA centroid")
+        print("      file when --zip-approx is used)")
         print()
         print("  It sends NOTHING to Anthropic / Claude. Your input file is")
         print("  read and written only on this machine.")
@@ -997,6 +1094,9 @@ def main() -> None:
         use_external_fallback = False
     elif args.use_external_fallback:
         use_external_fallback = True
+
+    # ZIP-approximate last-resort fallback (off by default; CLI flag or config).
+    use_zip_approx = bool(args.zip_approx) or config.get("use_zip_approx", False)
 
     # Determine reference data directory
     if args.tract_dataset:
@@ -1099,6 +1199,7 @@ def main() -> None:
             address_columns,
             use_fallback,
             use_external_fallback,
+            use_zip_approx,
             external_is_free_public,
             external_max_residual,
             concurrency,
@@ -1111,6 +1212,7 @@ def main() -> None:
             matched_api_backup=agg["matched_api_backup"],
             matched_fallback=agg["matched_fallback"],
             matched_external=agg["matched_external"],
+            matched_zip_approx=agg["matched_zip_approx"],
             unmatched=agg["unmatched"],
             rejected=agg["rejected"],
         )
@@ -1253,6 +1355,7 @@ def main() -> None:
             config,
             use_fallback,
             use_external_fallback,
+            use_zip_approx,
             external_budget,
             concurrency,
             retry_passes,
@@ -1348,6 +1451,7 @@ def main() -> None:
                     config,
                     use_fallback,
                     use_external_fallback,
+                    use_zip_approx,
                     external_budget,
                     concurrency,
                     retry_passes,
@@ -1386,6 +1490,7 @@ def main() -> None:
         matched_api_backup=agg["matched_api_backup"],
         matched_fallback=agg["matched_fallback"],
         matched_external=agg["matched_external"],
+        matched_zip_approx=agg["matched_zip_approx"],
         unmatched=agg["unmatched"],
         rejected=agg["rejected"],
     )
