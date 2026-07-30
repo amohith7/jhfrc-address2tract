@@ -156,7 +156,26 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "External geocoder for the residual (overrides config). 'nominatim' "
             "(free, small residuals only), 'arcgis' (token), or 'geoapify' "
-            "(free API key via GEOAPIFY_KEY env var)."
+            "(free API key)."
+        ),
+    )
+    parser.add_argument(
+        "--arcgis-token",
+        default=None,
+        help=(
+            "ArcGIS World Geocoder token, for --external-provider arcgis. "
+            "ArcGIS tokens are typically temporary, so pass it per run here (or "
+            "via the ARCGIS_TOKEN environment variable) rather than storing it "
+            "in the config file. Precedence: this flag, then ARCGIS_TOKEN, then "
+            "config."
+        ),
+    )
+    parser.add_argument(
+        "--geoapify-key",
+        default=None,
+        help=(
+            "Geoapify API key, for --external-provider geoapify. Precedence: "
+            "this flag, then the GEOAPIFY_KEY environment variable, then config."
         ),
     )
     parser.add_argument(
@@ -605,10 +624,14 @@ def _process_frame(
                         "external_user_agent", "jhfrc-address2tract/1.0 (research use)",
                     ),
                     arcgis_token=(
-                        geo_cfg.get("arcgis_token") or os.environ.get("ARCGIS_TOKEN")
+                        args.arcgis_token
+                        or os.environ.get("ARCGIS_TOKEN")
+                        or geo_cfg.get("arcgis_token")
                     ),
                     geoapify_key=(
-                        geo_cfg.get("geoapify_key") or os.environ.get("GEOAPIFY_KEY")
+                        args.geoapify_key
+                        or os.environ.get("GEOAPIFY_KEY")
+                        or geo_cfg.get("geoapify_key")
                     ),
                     delay=geo_cfg.get("external_delay", 1.1),
                     concurrency=concurrency,
