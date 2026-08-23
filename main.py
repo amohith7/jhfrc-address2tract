@@ -18,6 +18,7 @@ Usage examples:
 import os
 import sys
 import json
+import hashlib
 import logging
 from pathlib import Path
 
@@ -311,6 +312,32 @@ def _print_summary(
 # Default row count above which chunked, resumable processing turns on
 # automatically. Files at or below this size are processed in a single pass.
 DEFAULT_CHUNK_THRESHOLD = 50000
+
+
+def _file_sha256(path: Path, block_size: int = 1024 * 1024) -> str:
+    """Return a stable, memory-bounded SHA-256 fingerprint for a file."""
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for block in iter(lambda: source.read(block_size), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _validate_resumed_part(
+    part_path: Path, expected_rows: int, required_columns: set[str]
+) -> None:
+    """Reject a stale, incomplete, or structurally invalid resumable part."""
+    try:
+        part = pd.read_csv(part_path, dtype=str)
+    except Exception as exc:
+        raise ValueError(f"could not read the part file: {exc}") from exc
+
+    missing = sorted(required_columns.difference(part.columns))
+    if missing:
+        raise ValueError(f"required columns are missing: {missing}")
+    if len(part) != expected_rows:
+        raise ValueError(f"expected {expected_rows:,} rows but found {len(part):,}")
+
 
 # Default number of extra retry passes over still-unmatched rows within a run.
 DEFAULT_RETRY_PASSES = 2
@@ -1394,14 +1421,17 @@ def main() -> None:
             "input_path": str(Path(args.input).resolve()),
             "input_size": input_stat.st_size,
             "input_mtime": int(input_stat.st_mtime),
+            "input_sha256": _file_sha256(Path(args.input)),
             "n_rows": n_rows,
         }
         manifest_path = parts_dir / "manifest.json"
         existing_parts = sorted(parts_dir.glob("part_*.csv"))
         if manifest_path.exists():
             try:
-                prev_signature = json.loads(manifest_path.read_text())
+                manifest_state = json.loads(manifest_path.read_text())
+                prev_signature = manifest_state.get("run_signature")
             except Exception:
+                manifest_state = {}
                 prev_signature = None
             if prev_signature != run_signature:
                 print(
@@ -1415,6 +1445,9 @@ def main() -> None:
                     "delete that folder to start fresh."
                 )
                 sys.exit(1)
+            saved_budget = manifest_state.get("external_budget_remaining")
+            if external_is_free_public and isinstance(saved_budget, int):
+                external_budget[0] = min(external_budget[0], max(saved_budget, 0))
         elif existing_parts:
             print(
                 "\nError: the output part folder contains part files but no "
@@ -1425,7 +1458,11 @@ def main() -> None:
             )
             sys.exit(1)
         else:
-            manifest_path.write_text(json.dumps(run_signature, indent=2))
+            manifest_state = {
+                "run_signature": run_signature,
+                "external_budget_remaining": external_budget[0],
+            }
+            manifest_path.write_text(json.dumps(manifest_state, indent=2))
 
         logger.info(
             f"Large file ({n_rows:,} rows): chunked processing at "
@@ -1440,6 +1477,20 @@ def main() -> None:
             part_path = parts_dir / f"part_{idx:05d}.csv"
             if part_path.exists():
                 # Resume: this chunk was already completed in a prior run.
+                try:
+                    _validate_resumed_part(
+                        part_path,
+                        expected_rows=len(chunk),
+                        required_columns=set(chunk.columns).union(_RESULT_COLS),
+                    )
+                except ValueError as exc:
+                    print(
+                        "\nError: an existing resume part failed validation:\n"
+                        f"  {part_path}\n  {exc}\n"
+                        "Move the invalid part out of the parts folder and run "
+                        "the command again."
+                    )
+                    sys.exit(1)
                 logger.info(
                     f"Chunk {idx}: already complete ({part_path.name}), skipping."
                 )
@@ -1465,6 +1516,10 @@ def main() -> None:
                 logger.info(
                     f"Chunk {idx}: {len(out_df):,} rows written to {part_path.name}"
                 )
+                manifest_state["external_budget_remaining"] = external_budget[0]
+                manifest_tmp = manifest_path.with_suffix(".json.tmp")
+                manifest_tmp.write_text(json.dumps(manifest_state, indent=2))
+                manifest_tmp.replace(manifest_path)
 
             # Tally from the part file so resumed (skipped) chunks still count.
             status = pd.read_csv(part_path, usecols=["match_status"], dtype=str)[
