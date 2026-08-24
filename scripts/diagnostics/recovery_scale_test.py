@@ -17,10 +17,13 @@ from pathlib import Path
 
 import pandas as pd
 
-sys.path.insert(0, str(Path(__file__).parent / "src"))
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT / "src"))
 from geocode import geocode_batch, _parse_batch_response  # noqa: E402
 
-df = pd.read_csv("data/input/real_addresses_1000.csv", dtype=str).fillna("")
+df = pd.read_csv(PROJECT_ROOT / "data/input/real_addresses_1000.csv", dtype=str).fillna(
+    ""
+)
 
 
 def n_matched(res):
