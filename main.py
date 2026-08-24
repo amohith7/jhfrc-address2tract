@@ -82,10 +82,14 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # Required arguments
     parser.add_argument(
-        "--input", required=True, help="Path to the input file (.xlsx or .csv).",
+        "--input",
+        required=True,
+        help="Path to the input file (.xlsx or .csv).",
     )
     parser.add_argument(
-        "--output", required=True, help="Path for the output file (.xlsx or .csv).",
+        "--output",
+        required=True,
+        help="Path for the output file (.xlsx or .csv).",
     )
     parser.add_argument(
         "--id-column",
@@ -96,7 +100,8 @@ def _build_parser() -> argparse.ArgumentParser:
     # Address input: full address OR separate fields
     addr_group = parser.add_mutually_exclusive_group(required=True)
     addr_group.add_argument(
-        "--address-column", help="Name of the column containing full addresses.",
+        "--address-column",
+        help="Name of the column containing full addresses.",
     )
     addr_group.add_argument(
         "--street-column",
@@ -435,7 +440,11 @@ def _census_fallback_pass(
 
 
 def _zip_approx_pass(
-    valid_df: pd.DataFrame, tracts, args, config: dict, logger: logging.Logger,
+    valid_df: pd.DataFrame,
+    tracts,
+    args,
+    config: dict,
+    logger: logging.Logger,
 ) -> tuple:
     """Last-resort fallback (runs AFTER all geocoding): assign an APPROXIMATE
     tract to rows no geocoder could place, using the centroid of the address's
@@ -747,7 +756,8 @@ def _process_frame(
                     id_col=args.id_column,
                     provider=provider,
                     user_agent=geo_cfg.get(
-                        "external_user_agent", "jhfrc-address2tract/1.0 (research use)",
+                        "external_user_agent",
+                        "jhfrc-address2tract/1.0 (research use)",
                     ),
                     arcgis_token=(
                         args.arcgis_token
@@ -832,9 +842,9 @@ def _process_frame(
         )
         & valid_df["census_tract_geoid"].isna()
     )
-    valid_df.loc[
-        matched_but_no_tract, "error_reason"
-    ] = "Coordinates found but did not fall within a Census tract boundary"
+    valid_df.loc[matched_but_no_tract, "error_reason"] = (
+        "Coordinates found but did not fall within a Census tract boundary"
+    )
 
     # ------------------------------------------------------------------
     # 11. Assemble final output

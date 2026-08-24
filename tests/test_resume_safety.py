@@ -48,7 +48,9 @@ def test_validate_resumed_part_rejects_incomplete_part(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="expected 2 rows but found 1"):
         _validate_resumed_part(
-            part_path, expected_rows=2, required_columns={"client_id", "match_status"},
+            part_path,
+            expected_rows=2,
+            required_columns={"client_id", "match_status"},
         )
 
 
@@ -59,5 +61,7 @@ def test_validate_resumed_part_rejects_missing_columns(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="required columns are missing"):
         _validate_resumed_part(
-            part_path, expected_rows=1, required_columns={"client_id", "match_status"},
+            part_path,
+            expected_rows=1,
+            required_columns={"client_id", "match_status"},
         )
