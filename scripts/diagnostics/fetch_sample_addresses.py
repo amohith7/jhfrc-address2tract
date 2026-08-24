@@ -9,6 +9,8 @@ data. Writes data/input/real_addresses_1000.csv with columns:
 from __future__ import annotations
 
 import time
+from pathlib import Path
+
 import requests
 import pandas as pd
 
@@ -80,7 +82,8 @@ df = pd.DataFrame(rows, columns=["street", "city", "state", "zip"])
 df = df.head(1000).reset_index(drop=True)
 df.insert(0, "client_id", [f"C{i + 1:04d}" for i in range(len(df))])
 
-out = "data/input/real_addresses_1000.csv"
+project_root = Path(__file__).resolve().parents[2]
+out = project_root / "data/input/real_addresses_1000.csv"
 df.to_csv(out, index=False)
 print(f"\nWrote {len(df)} real addresses to {out}")
 print(df.head(8).to_string(index=False))
