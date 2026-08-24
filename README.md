@@ -116,6 +116,6 @@ Supply keys per run with `--arcgis-token` / `--geoapify-key`, or via the `ARCGIS
 | `--no-fallback` / `--no-external-fallback` | Turn off the Census one-at-a-time retry / the external lookup. |
 | `--sheet-name` / `--chunk-size` / `--config` | Excel sheet to read / rows per block / alternate settings file. |
 
-**Large files.** Over 50,000 rows the tool auto-chunks and is resumable — rerun the same command to continue. Over 100,000 rows the free OpenStreetMap fallback auto-disables (use `--external-provider arcgis`/`geoapify` for large residuals). Over ~1,048,576 rows the output is written as CSV.
+**Large files.** Over 50,000 rows the tool processes the file in smaller sections. If the run is interrupted, rerun the same command and it will safely continue. Over 100,000 rows the free OpenStreetMap fallback auto-disables (use `--external-provider arcgis`/`geoapify` for large residuals). Over ~1,048,576 rows the output is written as CSV.
 
 **All `match_status` values:** `Matched`, `Matched_Fallback`, `Matched_External`, `Matched_CensusAPI_Backup`, `Matched_ZIP_Approx` (approximate), `Tie`, `No_Match`, `Rejected`.
