@@ -79,7 +79,7 @@ Transfer only the tested program ZIP using a method approved by the nonprofit's 
 
 ```text
 record_id,street,city,state,zip
-P001,123 Main St,Chattanooga,TN,37402
+P001,[partner-supplied street],[city],[state],[ZIP]
 ```
 
 Save the partner's working copy as `C:\JHFRC_Address2Tract\data\input\partner_addresses.xlsx`. The original master dataset stays under the partner's control.
@@ -123,6 +123,5 @@ Replace `record_id` and the address-column names with the exact names in the par
 - **No output / library loading error:** reproduce using synthetic data and revise the Windows build on the UTC computer; do not troubleshoot by exporting the real partner file.
 
 **Project repository:** https://github.com/amohith7/jhfrc-address2tract  
-**Help:** mohith-addepalli@utc.edu
 
 **Author: Mohith Addepalli**
