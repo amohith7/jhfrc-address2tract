@@ -153,7 +153,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "REQUIRED to allow any outbound network call. Without it the tool "
             "refuses to contact any geocoder and exits after printing exactly "
-            "what it WOULD send and where. No data is ever sent to an external AI service."
+            "what it WOULD send and where."
         ),
     )
     parser.add_argument(
@@ -1080,8 +1080,7 @@ def main() -> None:
     # EGRESS GATE. This tool geocodes by sending addresses to a geocoding
     # service, which is an outbound network call. To guarantee no data leaves
     # this machine without explicit approval, the tool refuses to run any
-    # network step unless --approve-egress is passed. Nothing is ever sent to
-    # an external AI service; the model that wrote this code does not run it.
+    # network step unless --approve-egress is passed.
     # ------------------------------------------------------------------
     if not args.approve_egress:
         geo_cfg = config.get("geocoder", {})
@@ -1109,8 +1108,8 @@ def main() -> None:
         print("      the local tract file is missing; also the ZCTA centroid")
         print("      file when --zip-approx is used)")
         print()
-        print("  It sends NOTHING to an external AI service. Your input file is")
-        print("  read and written only on this machine.")
+        print("  Your input file is read and written only on this machine;")
+        print("  addresses go only to the geocoding services listed above.")
         print()
         print("  To authorize these requests and run for real, re-run with:")
         print("      --approve-egress")
@@ -1119,7 +1118,7 @@ def main() -> None:
 
     logger.info(
         "Egress approved by --approve-egress. Outbound geocoding enabled "
-        "(Census / external provider only; nothing to an external AI service)."
+        "(Census / external provider only)."
     )
 
     # Determine fallback setting (CLI flags override config)
