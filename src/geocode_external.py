@@ -261,6 +261,20 @@ def _geocode_geoapify(address: str, api_key: str) -> tuple | None:
     return None
 
 
+def _is_geocodable(addr: str) -> bool:
+    """Whether a query is worth sending to an external provider.
+
+    Rejects empty, whitespace-only, NaN-sentinel ("nan"/"none"/"null"), and
+    punctuation-only strings. A degenerate query like an empty address must
+    never be sent, because providers such as Nominatim will fuzzy-match it to
+    an arbitrary default location, producing a confidently wrong match.
+    """
+    s = (addr or "").strip()
+    if s.lower() in ("", "nan", "none", "null"):
+        return False
+    return any(ch.isalnum() for ch in s)
+
+
 def _geocode_one_external(
     row, address_col, id_col, provider, user_agent, arcgis_token, geoapify_key
 ) -> tuple:
@@ -270,6 +284,21 @@ def _geocode_one_external(
     timeout, bad token) from an address that legitimately did not resolve."""
     uid = str(row[id_col])
     addr = str(row[address_col])
+
+    # Guard: never send a degenerate query to a provider. This is defense in
+    # depth; blank addresses are normally rejected upstream, but a stray
+    # NaN-sentinel or punctuation-only string must not be geocoded here.
+    if not _is_geocodable(addr):
+        return (
+            {
+                "unique_id": uid,
+                "latitude": None,
+                "longitude": None,
+                "match_status": "No_Match",
+            },
+            False,
+        )
+
     coords = None
     had_error = False
     try:

@@ -535,7 +535,10 @@ def _process_frame(
     # ------------------------------------------------------------------
     ADDR_COL = "_address"
     if args.address_column:
-        df[ADDR_COL] = df[args.address_column].astype(str).str.strip()
+        # fillna("") BEFORE astype(str): a NaN address would otherwise become
+        # the literal string "nan", which is neither null nor empty and so
+        # slips past the missing-data reject guard below and gets geocoded.
+        df[ADDR_COL] = df[args.address_column].fillna("").astype(str).str.strip()
     else:
         df[ADDR_COL] = df.apply(
             lambda row: _combine_address_fields(
