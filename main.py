@@ -33,6 +33,7 @@ import yaml
 from collections import defaultdict
 
 from phi_validator import validate_no_phi
+from preflight import check_connectivity
 from geocode import (
     geocode_batch,
     geocode_fallback,
@@ -82,14 +83,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # Required arguments
     parser.add_argument(
-        "--input",
-        required=True,
-        help="Path to the input file (.xlsx or .csv).",
+        "--input", required=True, help="Path to the input file (.xlsx or .csv).",
     )
     parser.add_argument(
-        "--output",
-        required=True,
-        help="Path for the output file (.xlsx or .csv).",
+        "--output", required=True, help="Path for the output file (.xlsx or .csv).",
     )
     parser.add_argument(
         "--id-column",
@@ -100,8 +97,7 @@ def _build_parser() -> argparse.ArgumentParser:
     # Address input: full address OR separate fields
     addr_group = parser.add_mutually_exclusive_group(required=True)
     addr_group.add_argument(
-        "--address-column",
-        help="Name of the column containing full addresses.",
+        "--address-column", help="Name of the column containing full addresses.",
     )
     addr_group.add_argument(
         "--street-column",
@@ -440,11 +436,7 @@ def _census_fallback_pass(
 
 
 def _zip_approx_pass(
-    valid_df: pd.DataFrame,
-    tracts,
-    args,
-    config: dict,
-    logger: logging.Logger,
+    valid_df: pd.DataFrame, tracts, args, config: dict, logger: logging.Logger,
 ) -> tuple:
     """Last-resort fallback (runs AFTER all geocoding): assign an APPROXIMATE
     tract to rows no geocoder could place, using the centroid of the address's
@@ -756,8 +748,7 @@ def _process_frame(
                     id_col=args.id_column,
                     provider=provider,
                     user_agent=geo_cfg.get(
-                        "external_user_agent",
-                        "jhfrc-address2tract/1.0 (research use)",
+                        "external_user_agent", "jhfrc-address2tract/1.0 (research use)",
                     ),
                     arcgis_token=(
                         args.arcgis_token
@@ -842,9 +833,9 @@ def _process_frame(
         )
         & valid_df["census_tract_geoid"].isna()
     )
-    valid_df.loc[matched_but_no_tract, "error_reason"] = (
-        "Coordinates found but did not fall within a Census tract boundary"
-    )
+    valid_df.loc[
+        matched_but_no_tract, "error_reason"
+    ] = "Coordinates found but did not fall within a Census tract boundary"
 
     # ------------------------------------------------------------------
     # 11. Assemble final output
@@ -1157,6 +1148,43 @@ def main() -> None:
     # disabled automatically (a very large residual would be abusive on a free
     # public service). ArcGIS/paid providers are not subject to this.
     external_max_rows = int(geo_cfg.get("external_max_rows", 100000))
+
+    # ------------------------------------------------------------------
+    # CONNECTIVITY PREFLIGHT. Egress is approved, so before reading the
+    # input file and launching batches, confirm the geocoding host is
+    # actually reachable. This sends no address data (a host probe only)
+    # and lets a missing or broken connection fail fast with a clear
+    # message instead of every batch exhausting its retry budget first.
+    # ------------------------------------------------------------------
+    print()
+    print("Checking connectivity to the geocoding service ...")
+    census_ok, preflight_results = check_connectivity(
+        check_external=use_external_fallback, external_provider=external_provider,
+    )
+    for label, ok, detail in preflight_results:
+        mark = "OK  " if ok else "FAIL"
+        print(f"  [{mark}] {label}  ({detail})")
+    if not census_ok:
+        print()
+        print("=" * 64)
+        print("  CONNECTIVITY CHECK FAILED — the Census geocoder is not")
+        print("  reachable from this machine. Nothing was sent.")
+        print("=" * 64)
+        print("  Common causes: no internet connection, a firewall or proxy")
+        print("  blocking outbound HTTPS, or the Census service being down.")
+        print("  Verify you can open https://geocoding.geo.census.gov in a")
+        print("  browser, then re-run.")
+        print("=" * 64)
+        sys.exit(2)
+    if use_external_fallback and any(
+        (not ok) and "external fallback" in label for label, ok, _ in preflight_results
+    ):
+        print(
+            "  Note: the external fallback provider is unreachable. The run "
+            "will continue on the Census geocoder; addresses that would have "
+            "used the fallback may remain unmatched."
+        )
+    print()
 
     # Census batch concurrency (CLI overrides config; default 6). Clamp to >= 1.
     if args.concurrency is not None:
