@@ -27,7 +27,19 @@ You need **Python 3.10 or later** (tested through Python 3.12; the pinned depend
 2. Open a terminal **inside the project folder**:
    - **Windows:** open the folder in File Explorer, click the address bar, type `cmd`, press Enter.
    - **Mac:** open Terminal, type `cd ` (with a space), drag the folder in, press Enter.
-3. Install the requirements:
+3. Create and activate a virtual environment (recommended). This keeps this project's package versions separate from the rest of your computer, so it won't disturb other Python tools you have installed:
+   - **Windows:**
+     ```
+     python -m venv venv
+     venv\Scripts\activate
+     ```
+   - **Mac:**
+     ```
+     python3 -m venv venv
+     source venv/bin/activate
+     ```
+   You'll see `(venv)` at the start of the prompt when it's active. When you're finished, type `deactivate`.
+4. Install the requirements:
    ```
    pip install -r requirements.txt
    ```
