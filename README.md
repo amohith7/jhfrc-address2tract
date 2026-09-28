@@ -21,7 +21,7 @@ Do **not** include names, birth dates, or any other personal information. As a s
 
 ## First-time setup (once)
 
-You need **Python 3.10 or later** ([python.org](https://www.python.org/downloads/); on Windows, tick **"Add Python to PATH"**).
+You need **Python 3.10 or later** (tested through Python 3.12; the pinned dependencies install as prebuilt wheels on these versions, so no compiler is needed) ([python.org](https://www.python.org/downloads/); on Windows, tick **"Add Python to PATH"**).
 
 1. Download this project: green **Code** button → **Download ZIP**, then unzip it.
 2. Open a terminal **inside the project folder**:
