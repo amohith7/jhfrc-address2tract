@@ -45,6 +45,7 @@ from tract_join import get_tract_dataset, join_points_to_tracts, get_zcta_centro
 from utils.io import (
     read_input,
     write_output,
+    write_share_file,
     scan_input,
     iter_input_chunks,
     concat_csv_parts,
@@ -996,7 +997,7 @@ def _run_retry_mode(
     if n_failed == 0:
         logger.info("Retry mode: no No_Match/Tie rows found; writing file unchanged.")
         try:
-            write_output(prev, args.output)
+            _write_outputs(prev, args.output, args.id_column)
         except Exception as e:
             print(f"\nError writing output file:\n  {e}")
             sys.exit(1)
@@ -1060,7 +1061,7 @@ def _run_retry_mode(
     )
 
     try:
-        write_output(updated, args.output)
+        _write_outputs(updated, args.output, args.id_column)
     except Exception as e:
         print(f"\nError writing output file:\n  {e}")
         sys.exit(1)
@@ -1086,6 +1087,17 @@ def _require_supported_python() -> None:
             )
         )
         raise SystemExit(1)
+
+
+def _write_outputs(df: pd.DataFrame, output: str, id_column: str) -> None:
+    """Write the full result plus the de-identified file to share with JHFRC.
+
+    The ID and Census tract columns are written as uniform text so Excel lookup
+    functions (XLOOKUP/VLOOKUP) match reliably, and the share file carries only
+    ID + Census tract + status, so it contains no address and no PHI.
+    """
+    write_output(df, output, text_columns=[id_column, "census_tract_geoid"])
+    write_share_file(df, output, id_column)
 
 
 def main() -> None:
@@ -1462,7 +1474,7 @@ def main() -> None:
         )
 
         try:
-            write_output(output_df, args.output)
+            _write_outputs(output_df, args.output, args.id_column)
         except Exception as e:
             print(f"\nError writing output file:\n  {e}")
             sys.exit(1)
@@ -1607,6 +1619,16 @@ def main() -> None:
             f"({agg['total']:,} rows). Part files kept in {parts_dir} for "
             "resume safety; you may delete that folder once the output looks good."
         )
+        # De-identified share file for the large-file path. Read back only the
+        # three columns needed (no address), so memory stays small even here.
+        try:
+            share_cols = {args.id_column, "census_tract_geoid", "match_status"}
+            combined = pd.read_csv(
+                output_path, dtype=str, usecols=lambda c: c in share_cols
+            )
+            write_share_file(combined, str(output_path), args.id_column)
+        except Exception as e:
+            logger.warning(f"Could not write the de-identified share file: {e}")
 
     # ------------------------------------------------------------------
     # 8. Print summary
