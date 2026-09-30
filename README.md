@@ -99,7 +99,9 @@ For the best match rate, include the full city, state, and ZIP in every address.
 
 ## Sharing results with JHFRC
 
-Send only the **output file**. Confirm it contains just the ID, address, and Census tract columns — no names or personal data.
+The tool writes a second file next to your output whose name ends in **`_to_share`** (for example `results_to_share.xlsx`). **Send only that file.** It contains only your ID code, the Census tract, and the match status. It has **no street address, no names, and no PHI**. Keep the full output (which includes the address, for your own checking) on your own computer.
+
+Use a non-identifying ID (an internal code), not a name or an SSN. The ID and Census tract are written as text, so Excel lookup functions like XLOOKUP match them reliably.
 
 ## Help
 
