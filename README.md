@@ -21,7 +21,7 @@ Do **not** include names, birth dates, or any other personal information. As a s
 
 ## First-time setup (once)
 
-You need **Python 3.10, 3.11, or 3.12**. Other versions are not supported: the pinned dependencies only provide ready-to-use installers for these, so an older or newer Python (for example 3.9 or 3.13) will fail to install with a confusing error. Get a supported version from [python.org](https://www.python.org/downloads/) (on Windows, tick **"Add Python to PATH"**).
+You need **Python 3.10 or newer**, including the latest release (3.15 at the time of writing). On 3.10 to 3.12 the setup installs exact, tested versions of each dependency; on 3.13 and newer it automatically installs the newest versions that support your Python, so new Python releases work without changes here. Older versions (for example 3.9) are not supported and will fail to install with a confusing error. Get the latest version from [python.org](https://www.python.org/downloads/) (on Windows, tick **"Add Python to PATH"**).
 
 Not sure which version you have? After you open the terminal (step 2 below), run `python check_python.py` and it will tell you in plain language whether your Python will work.
 

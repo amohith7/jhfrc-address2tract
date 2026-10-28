@@ -21,8 +21,22 @@ jobs:
             python-version: "3.11"
           - os: ubuntu-latest
             python-version: "3.12"
+          - os: ubuntu-latest
+            python-version: "3.13"
+          - os: ubuntu-latest
+            python-version: "3.14"
+          - os: ubuntu-latest
+            python-version: "3.15"
+          # "3.x" is always the newest stable release, so new Python versions
+          # are tested automatically as soon as they come out.
+          - os: ubuntu-latest
+            python-version: "3.x"
           - os: windows-latest
             python-version: "3.12"
+          - os: windows-latest
+            python-version: "3.15"
+          - os: windows-latest
+            python-version: "3.x"
 
     steps:
       - name: Check out repository
