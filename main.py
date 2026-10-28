@@ -1072,16 +1072,17 @@ def _run_retry_mode(
 def _require_supported_python() -> None:
     """Exit with a plain-language message on an unsupported Python.
 
-    The pinned dependencies ship prebuilt wheels only for Python 3.10-3.12.
-    Run this at startup (not import time, so the module stays importable for
-    tests) as a backstop for the case where the packages were installed some
-    other way, for example via conda, on an unsupported version.
+    Python 3.10 is the minimum; there is no upper limit, because on 3.13 and
+    newer requirements.txt installs the newest dependency releases. Run this at
+    startup (not import time, so the module stays importable for tests) as a
+    backstop for the case where the packages were installed some other way, for
+    example via conda, on an unsupported version.
     """
     v = sys.version_info
-    if not ((3, 10) <= (v[0], v[1]) < (3, 13)):
+    if (v[0], v[1]) < (3, 10):
         sys.stderr.write(
-            "\nUnsupported Python {0}.{1}.{2}. This tool supports Python 3.10, "
-            "3.11, or 3.12.\nInstall a supported version from "
+            "\nUnsupported Python {0}.{1}.{2}. This tool needs Python 3.10 or "
+            "newer.\nInstall a supported version from "
             "https://www.python.org/downloads/ and try again.\n\n".format(
                 v[0], v[1], v[2]
             )

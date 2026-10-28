@@ -29,7 +29,9 @@ def normalize_text_columns(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     for col in df.columns:
         s = df[col]
-        if s.dtype == object or str(s.dtype) == "string":
+        # Checked on the dtype (not the values) so it matches object columns as
+        # well as the "string" and pandas 3 "str" dtypes.
+        if pd.api.types.is_string_dtype(s.dtype):
             s = s.str.strip()
             s = s.str.replace(_INT_DOT_ZERO, r"\1", regex=True)
             df[col] = s
