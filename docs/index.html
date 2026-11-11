@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Address to Census Tract | JHFRC</title>
+  <meta name="description" content="Convert a file of addresses to U.S. Census tracts in your browser. Built by the Journey Health Foundation Research Center at UTC.">
+  <link rel="icon" type="image/png" href="assets/favicon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600&family=Raleway:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap header-inner">
+      <img class="logo" src="assets/utc24-jhf-shrt-hrz-logo-inverted-rgb.svg" alt="UTC Journey Health Foundation">
+      <span class="header-tag">Research Center</span>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section class="intro">
+      <h1>Address to Census Tract</h1>
+      <p class="lede">Upload a spreadsheet of addresses and get back the U.S. Census tract for each one. No software to install.</p>
+      <div class="privacy">
+        <strong>Your file stays on your computer.</strong>
+        It is opened and processed inside this browser tab and is never uploaded to or stored on this site.
+        Only the address text of each record is sent to the U.S. Census Bureau geocoder (and, for addresses
+        the Census cannot find, to the OpenStreetMap Nominatim geocoder) to look up its location.
+      </div>
+    </section>
+
+    <!-- Step 1: file -->
+    <section class="card" id="step-file">
+      <h2><span class="num">1</span> Choose your file</h2>
+      <label class="drop" id="drop">
+        <input type="file" id="file" accept=".xlsx,.xls,.csv">
+        <span class="drop-main">Click to choose a file, or drag it here</span>
+        <span class="drop-sub">Excel (.xlsx, .xls) or CSV, up to <span id="max-rows"></span> rows</span>
+      </label>
+      <div class="file-info" id="file-info" hidden></div>
+      <div class="field" id="sheet-field" hidden>
+        <label for="sheet">Sheet</label>
+        <select id="sheet"></select>
+      </div>
+      <p class="hint">Include only an ID column and the address column(s). Remove names, dates of birth, phone numbers and other personal details before you start.</p>
+    </section>
+
+    <!-- Step 2: columns -->
+    <section class="card" id="step-columns" hidden>
+      <h2><span class="num">2</span> Match your columns</h2>
+      <div class="field">
+        <label for="col-id">Unique ID column</label>
+        <select id="col-id"></select>
+      </div>
+      <fieldset class="mode">
+        <legend>How are the addresses stored?</legend>
+        <label><input type="radio" name="mode" value="split" checked> Separate street, city, state and ZIP columns</label>
+        <label><input type="radio" name="mode" value="single"> One column with the full address</label>
+      </fieldset>
+      <div id="split-fields" class="grid">
+        <div class="field"><label for="col-street">Street</label><select id="col-street"></select></div>
+        <div class="field"><label for="col-city">City</label><select id="col-city"></select></div>
+        <div class="field"><label for="col-state">State</label><select id="col-state"></select></div>
+        <div class="field"><label for="col-zip">ZIP</label><select id="col-zip"></select></div>
+      </div>
+      <div id="single-fields" hidden>
+        <div class="field"><label for="col-address">Full address</label><select id="col-address"></select></div>
+      </div>
+      <div class="alert" id="column-error" role="alert" hidden></div>
+      <div class="actions">
+        <button class="btn primary" id="start" type="button">Find census tracts</button>
+      </div>
+    </section>
+
+    <!-- Step 3: progress -->
+    <section class="card" id="step-run" hidden>
+      <h2><span class="num">3</span> Finding census tracts</h2>
+      <p id="run-stage" aria-live="polite">Starting...</p>
+      <div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" id="bar"><div id="bar-fill"></div></div>
+      <p class="hint" id="run-detail"></p>
+      <p class="hint">Keep this tab open until it finishes. Closing it stops the run.</p>
+      <div class="actions">
+        <button class="btn" id="cancel" type="button">Cancel</button>
+      </div>
+    </section>
+
+    <!-- Step 4: results -->
+    <section class="card" id="step-results" hidden>
+      <h2><span class="num">4</span> Results</h2>
+      <div class="tiles" id="tiles"></div>
+      <table class="methods" id="methods"></table>
+      <div class="downloads">
+        <div class="download">
+          <button class="btn primary" id="dl-share" type="button">Download results_to_share.xlsx</button>
+          <p><strong>Send this file to JHFRC.</strong> It contains only the ID, census tract and match status, with no addresses.</p>
+        </div>
+        <div class="download">
+          <button class="btn" id="dl-full" type="button">Download results.xlsx</button>
+          <p><strong>Keep this file on your computer.</strong> It includes the addresses so you can review unmatched records. Do not share it.</p>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="btn link" id="again" type="button">Start over with another file</button>
+      </div>
+    </section>
+
+    <section class="faq">
+      <h2>Questions</h2>
+      <details>
+        <summary>What do the match statuses mean?</summary>
+        <dl>
+          <dt>Matched</dt><dd>Found by the Census geocoder in its current address file.</dd>
+          <dt>Matched_Fallback</dt><dd>Found by the Census geocoder in its 2020 address file, or after tidying the street abbreviation.</dd>
+          <dt>Matched_External</dt><dd>Located by the OpenStreetMap Nominatim geocoder, then assigned to its Census tract.</dd>
+          <dt>No_Match</dt><dd>No geocoder could place the address. Check it for typos or a missing street number. PO boxes are never matched because they have no physical location.</dd>
+          <dt>Rejected</dt><dd>The row was missing its ID or its address.</dd>
+        </dl>
+      </details>
+      <details>
+        <summary>Which tract boundaries are used?</summary>
+        <p>The Census Bureau's current tract boundaries, as returned by the Census geocoder. Tract codes are 11 digits: state (2), county (3) and tract (6).</p>
+      </details>
+      <details>
+        <summary>My file is larger than the limit.</summary>
+        <p>Split it into smaller files, or contact us to use the command-line version of this tool, which is built for large files.</p>
+      </details>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <p>Built by the Journey Health Foundation Research Center, University of Tennessee at Chattanooga.
+        Questions: <a href="mailto:mohith-addepalli@utc.edu">mohith-addepalli@utc.edu</a></p>
+      <p>Geocoding by the <a href="https://geocoding.geo.census.gov/">U.S. Census Bureau</a> and
+        <a href="https://nominatim.openstreetmap.org/">Nominatim</a> (data &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>, ODbL).
+        <a href="https://github.com/amohith7/jhfrc-address2tract">Source code</a>.</p>
+    </div>
+  </footer>
+
+  <script src="assets/vendor/xlsx.full.min.js"></script>
+  <script src="assets/core.js"></script>
+  <script src="assets/geocoder.js"></script>
+  <script src="assets/app.js"></script>
+</body>
+</html>
