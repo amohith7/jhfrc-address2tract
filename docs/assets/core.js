@@ -122,6 +122,41 @@
     return columns.filter((c) => PHI_INDICATORS.some((ind) => matchesPhi(c, ind)));
   }
 
+  // Cell contents that look like personal details. The column-name screen
+  // above cannot see these when they sit under an innocent header such as
+  // "contact", or are typed into the address itself.
+  const CONTENT_PATTERNS = [
+    ["an email address", /[^\s@,;]+@[^\s@,;]+\.[A-Za-z]{2,}/],
+    // 3-3-4 digits with separators, so a ZIP+4 or a plain numeric ID is not hit.
+    ["a phone number", /(?:\(\d{3}\)\s?|\b\d{3}[-.\s])\d{3}[-.\s]\d{4}\b/],
+    ["a Social Security number", /\b\d{3}-\d{2}-\d{4}\b/],
+    ["a date (such as a date of birth)", /\b\d{1,2}[/-]\d{1,2}[/-](?:\d{2}|\d{4})\b|\b(?:19|20)\d{2}-\d{1,2}-\d{1,2}\b/],
+    // Words, a comma, then a house number: "Jane Testcase, 615 McCallie Ave".
+    ["a name in front of the address", /^\s*[A-Za-z][A-Za-z .'-]*,\s*\d/],
+  ];
+
+  /**
+   * Cells that look like personal details, grouped by column and kind:
+   * [{column, kind, rows: [1-based spreadsheet row numbers, header = row 1]}].
+   * Values are never returned, so the warning itself does not repeat them.
+   */
+  function scanCellsForPhi(rows, columns) {
+    const found = new Map();
+    rows.forEach((row, i) => {
+      for (const col of columns) {
+        const text = cleanCell(row[col]);
+        if (!text) continue;
+        for (const [kind, re] of CONTENT_PATTERNS) {
+          if (!re.test(text)) continue;
+          const key = col + "\u0000" + kind;
+          if (!found.has(key)) found.set(key, { column: col, kind, rows: [] });
+          found.get(key).rows.push(i + 2);
+        }
+      }
+    });
+    return [...found.values()];
+  }
+
   /**
    * Duplicate IDs among rows that will actually be geocoded (io.scan_input):
    * rows with a blank ID or a fully blank address are ignored.
@@ -220,7 +255,7 @@
 
   return {
     cleanCell, isBlank, normalizeZip, combineAddress, normalizeStreet,
-    normalizeAddressStreet, checkForPhi, findDuplicateIds, isGeocodable, isPoBox,
+    normalizeAddressStreet, checkForPhi, scanCellsForPhi, findDuplicateIds, isGeocodable, isPoBox,
     nominatimPrecise, pickNominatim, cleanGeoid, guessColumns, tally,
   };
 });
