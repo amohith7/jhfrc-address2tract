@@ -135,9 +135,16 @@
     const { columns, rows } = readSheet(state.workbook.Sheets[name]);
     state.columns = columns;
     state.rows = rows;
+    $("step-columns").hidden = true;
+    // Refuse the file as soon as it is opened, before any column is offered.
+    const phi = A2T.checkForPhi(columns);
+    if (phi.length) {
+      state.rows = [];
+      showFileInfo(state.fileName + ": " + phiMessage(phi), true);
+      return;
+    }
     if (!rows.length) {
       showFileInfo(state.fileName + ": this sheet has no data rows.", true);
-      $("step-columns").hidden = true;
       return;
     }
     if (rows.length > MAX_ROWS) {
@@ -146,12 +153,21 @@
           MAX_ROWS.toLocaleString() + ". Please split it into smaller files.",
         true
       );
-      $("step-columns").hidden = true;
       return;
     }
     showFileInfo(state.fileName + ": " + rows.length.toLocaleString() + " rows, " + columns.length + " columns", false);
     fillColumnPickers();
     $("step-columns").hidden = false;
+  }
+
+  function phiMessage(phi) {
+    return (
+      "This file contains column(s) that may include sensitive personal information:\n" +
+      phi.map((c) => '  - "' + c + '"').join("\n") +
+      "\n\nTo protect client privacy, this tool only accepts the minimum necessary information. " +
+      "Please remove these columns from your file, save it, and choose it again. " +
+      "Keep only a unique ID and the address column(s)."
+    );
   }
 
   function showFileInfo(text, isError) {
@@ -203,16 +219,9 @@
     const picked = Object.values(cols).filter(Boolean);
     if (new Set(picked).size !== picked.length) return "Each column can only be used once. Please check your choices.";
 
+    // Backstop only: loadSheet already refuses a sheet with these columns.
     const phi = A2T.checkForPhi(state.columns);
-    if (phi.length) {
-      return (
-        "This file contains column(s) that may include sensitive personal information:\n" +
-        phi.map((c) => '  - "' + c + '"').join("\n") +
-        "\n\nTo protect client privacy, this tool only accepts the minimum necessary information. " +
-        "Please remove these columns from your file, save it, and choose it again. " +
-        "Keep only a unique ID and the address column(s)."
-      );
-    }
+    if (phi.length) return phiMessage(phi);
 
     const addressCols = picked.filter((c) => c !== cols.id);
     const dups = A2T.findDuplicateIds(state.rows, cols.id, addressCols);
@@ -380,7 +389,12 @@
   // ------------------------------------------------------------------- wiring
 
   $("max-rows").textContent = MAX_ROWS.toLocaleString();
-  $("file").addEventListener("change", (e) => e.target.files[0] && openFile(e.target.files[0]));
+  $("file").addEventListener("change", (e) => {
+    const f = e.target.files[0];
+    // Clear the input so choosing the same (now fixed) file again still fires.
+    e.target.value = "";
+    if (f) openFile(f);
+  });
   $("sheet").addEventListener("change", (e) => {
     resetFrom("sheet");
     loadSheet(e.target.value);
