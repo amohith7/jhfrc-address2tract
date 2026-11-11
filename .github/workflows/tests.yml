@@ -65,3 +65,19 @@ jobs:
 
       - name: Compile Python sources
         run: python -m compileall -q main.py src tests
+
+  web:
+    # The website (docs/) runs the same pipeline in the browser; these tests
+    # exercise its logic with an offline fake network.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Run website tests
+        run: node --test "tests/web/*.test.js"

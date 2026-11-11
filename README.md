@@ -2,6 +2,14 @@
 
 Converts a file of addresses into U.S. Census tract IDs (GEOIDs), so JHFRC can link them to community data **without needing any names or personal details**. Built by the Journey Health Foundation Research Center for nonprofit partners.
 
+## Easiest option: use the website
+
+**https://amohith7.github.io/jhfrc-address2tract/**
+
+Open the page, choose your file, match your columns, and download the results. Nothing to install. Your file is processed inside your browser and is never uploaded to or stored on the site; only each address is sent to the U.S. Census Bureau geocoder (and, for addresses the Census cannot find, to the OpenStreetMap Nominatim geocoder). The website follows the same rules as this tool: the same privacy screen on column names, unique-ID check, address cleanup and output files (`results.xlsx` to keep, `results_to_share.xlsx` to send to JHFRC).
+
+The website handles files up to 5,000 rows, looking up several addresses at a time, so a large file can take several minutes; the page shows progress and an estimate. For larger files, use the command-line tool below. Website code lives in [`docs/`](docs/).
+
 ---
 
 ## What you need
