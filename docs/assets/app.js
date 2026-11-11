@@ -72,6 +72,8 @@
     if (!cell || cell.v === undefined || cell.v === null) return "";
     if (cell.t === "n") {
       if (cell.z && /^0+$/.test(String(cell.z)) && cell.w) return cell.w;
+      // A date is stored as a serial number; use the date Excel shows.
+      if (cell.z && cell.w && XLSX.SSF.is_date(cell.z)) return cell.w;
       if (Number.isInteger(cell.v)) return BigInt(cell.v).toString();
       return String(cell.v);
     }
@@ -143,6 +145,12 @@
       showFileInfo(state.fileName + ": " + phiMessage(phi), true);
       return;
     }
+    const cells = A2T.scanCellsForPhi(rows, columns);
+    if (cells.length) {
+      state.rows = [];
+      showFileInfo(state.fileName + ": " + cellPhiMessage(cells), true);
+      return;
+    }
     if (!rows.length) {
       showFileInfo(state.fileName + ": this sheet has no data rows.", true);
       return;
@@ -158,6 +166,18 @@
     showFileInfo(state.fileName + ": " + rows.length.toLocaleString() + " rows, " + columns.length + " columns", false);
     fillColumnPickers();
     $("step-columns").hidden = false;
+  }
+
+  /** Where personal-looking values were found, by row number, never the values. */
+  function cellPhiMessage(cells) {
+    const rowList = (rs) =>
+      rs.slice(0, 8).join(", ") + (rs.length > 8 ? " and " + (rs.length - 8) + " more" : "");
+    return (
+      "This file appears to contain personal information:\n" +
+      cells.map((c) => '  - column "' + c.column + '" has ' + c.kind + " in row(s) " + rowList(c.rows)).join("\n") +
+      "\n\nTo protect client privacy, nothing has been sent anywhere. Please remove this " +
+      "information from your file (keep only a unique ID and the address), save it, and choose it again."
+    );
   }
 
   function phiMessage(phi) {

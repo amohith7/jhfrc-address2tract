@@ -104,3 +104,37 @@ test("guessColumns recognizes common header names", () => {
     zip: "ZIP Code",
   });
 });
+
+test("scanCellsForPhi finds personal details by content, without values", () => {
+  const rows = [
+    { id: "1", street: "615 McCallie Ave", contact: "Jane Testcase 423-555-0101" },
+    { id: "2", street: "Jane Testcase, 116 5th Ave N", contact: "" },
+    { id: "3", street: "1 Lodge St", contact: "pat@example.com" },
+    { id: "4", street: "2 E Main St", contact: "123-45-6789" },
+    { id: "5", street: "11 Wall St", contact: "1/2/1900" },
+    { id: "6", street: "350 5th Ave", contact: "(404) 555-0103" },
+    { id: "7", street: "400 Broad St", contact: "1900-05-05" },
+  ];
+  const found = A2T.scanCellsForPhi(rows, ["id", "street", "contact"]);
+  const summary = found.map((f) => [f.column, f.kind, f.rows]);
+  assert.deepEqual(summary, [
+    ["contact", "a phone number", [2, 7]],
+    ["street", "a name in front of the address", [3]],
+    ["contact", "an email address", [4]],
+    ["contact", "a Social Security number", [5]],
+    ["contact", "a date (such as a date of birth)", [6, 8]],
+  ]);
+  assert.ok(!JSON.stringify(found).includes("Testcase"));
+});
+
+test("scanCellsForPhi leaves ordinary address files alone", () => {
+  const rows = [
+    { id: "T001", street: "1600 Pennsylvania Ave NW", city: "Washington", zip: "20500" },
+    { id: "123456789012345", street: "PO Box 100", city: "Chattanooga", zip: "37403-1234" },
+    { id: "A-7", street: "3600 Las Vegas Blvd S", city: "Las Vegas", zip: "89109" },
+    { id: "47065012400", street: "1 1ST ST NE", city: "Washington", zip: "20543" },
+    { id: "2024-001", street: "4790 W 16th St Apt 2", city: "Indianapolis", zip: "46222" },
+    { id: "x", street: "One Main St, Suite 4", city: "Hoboken", zip: "07030" },
+  ];
+  assert.deepEqual(A2T.scanCellsForPhi(rows, ["id", "street", "city", "zip"]), []);
+});
