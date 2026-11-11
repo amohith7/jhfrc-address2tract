@@ -247,9 +247,11 @@
    * Geocode every pending record in place. onProgress({stage, done, total}) is
    * called as work completes; stage is "census", "retry" or "external".
    */
-  async function run(records, { transport, onProgress, signal, options } = {}) {
+  async function run(records, { transport, onProgress, onRecord, signal, options } = {}) {
     const ctx = { transport, signal, opts: { ...DEFAULTS, ...(options || {}) } };
     const report = onProgress || (() => {});
+    // onRecord(rec) fires each time a record's lookup finishes (live feed).
+    const emit = onRecord || (() => {});
     const pending = records.filter((r) => r.match_status === STATUS_NO_MATCH);
 
     let done = 0;
@@ -258,6 +260,7 @@
       ctx.opts.concurrency,
       async (rec) => {
         await geocodeCensus(rec, ctx);
+        emit(rec);
         report({ stage: "census", done: ++done, total: pending.length });
       },
       signal
@@ -276,6 +279,7 @@
         ctx.opts.concurrency,
         async (rec) => {
           await geocodeCensus(rec, ctx);
+          emit(rec);
           report({ stage: "retry", done: ++n, total: failed.length, pass });
         },
         signal
@@ -291,6 +295,7 @@
       checkCancel(signal);
       if (i > 0) await transport.sleep(ctx.opts.externalDelayMs);
       await geocodeExternal(residual[i], ctx);
+      emit(residual[i]);
       report({ stage: "external", done: i + 1, total: residual.length });
     }
 
@@ -300,12 +305,15 @@
 
   /** Full output rows: ID, the input address column(s), then the results. */
   function resultRows(records, cols) {
+    const corrected = records.some((r) => r.corrected_address);
     const inputCols = [cols.id].concat(
       cols.address ? [cols.address] : [cols.street, cols.city, cols.state, cols.zip]
     ).filter(Boolean);
     return records.map((r) => {
       const out = {};
       for (const c of inputCols) out[c] = c === cols.id ? r.id : A2T.cleanCell(r.row[c]);
+      // Only present when the user fixed an address on the results page.
+      if (corrected) out.corrected_address = r.corrected_address || "";
       out.cleaned_address = r.cleaned_address;
       out.census_tract_geoid = r.census_tract_geoid;
       out.match_status = r.match_status;
