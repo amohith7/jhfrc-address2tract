@@ -5,109 +5,283 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Address to Census Tract | JHFRC</title>
   <meta name="description" content="Convert a file of addresses to U.S. Census tracts in your browser. Built by the Journey Health Foundation Research Center at UTC.">
+  <meta name="theme-color" content="#002147">
   <link rel="icon" type="image/png" href="assets/favicon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600&family=Raleway:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="assets/style.css?v=52718d6b">
+  <link rel="stylesheet" href="assets/style.css?v=b8ade216">
 </head>
 <body>
+  <a class="skip" href="#app">Skip to the tool</a>
+
+  <!-- SVG icon sprite, referenced with <svg><use href="#i-name"/></svg> -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V4m0 0-4 4m4-4 4 4M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zm0 0v5h5M9 13h6M9 17h6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3 4.5 6v5.5c0 4.6 3.2 8.4 7.5 9.5 4.3-1.1 7.5-4.9 7.5-9.5V6zm-3.2 9 2.2 2.2 4.2-4.4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 9v4m0 4h.01M10.3 3.9 2.6 17.3A2 2 0 0 0 4.3 20h15.4a2 2 0 0 0 1.7-2.7L13.7 3.9a2 2 0 0 0-3.4 0z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v12m0 0-4-4m4 4 4-4M4 20h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="m16 16 4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 0-14.6-4.5L4 8m0-4v4h4M4 13a8 8 0 0 0 14.6 4.5L20 16m0 4v-4h-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-left" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-right" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l10.5-6.5z" fill="currentColor"/></symbol>
+    <symbol id="i-sparkle" viewBox="0 0 24 24"><path d="M12 3v4m0 10v4M3 12h4m10 0h4M6.3 6.3l2.5 2.5m6.4 6.4 2.5 2.5m0-11.4-2.5 2.5m-6.4 6.4-2.5 2.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-scissors" viewBox="0 0 24 24"><circle cx="6" cy="6" r="3" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="6" cy="18" r="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8.6 7.6 20 18M8.6 16.4 20 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-sort" viewBox="0 0 24 24"><path d="m8 10 4-4 4 4M8 14l4 4 4-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  </svg>
+
   <header class="site-header">
     <div class="wrap header-inner">
-      <img class="logo" src="assets/utc24-jhf-shrt-hrz-logo-inverted-rgb.svg" alt="UTC Journey Health Foundation">
-      <span class="header-tag">Research Center</span>
+      <a class="brand" href="#top" aria-label="Address to Census Tract, home">
+        <img class="logo" src="assets/utc24-jhf-shrt-hrz-logo-inverted-rgb.svg" alt="UTC Journey Health Foundation">
+        <span class="header-tag">Research Center</span>
+      </a>
+      <nav class="nav" aria-label="Page sections">
+        <a href="#how">How it works</a>
+        <a href="#privacy">Privacy</a>
+        <a href="#faq">FAQ</a>
+        <a href="https://github.com/amohith7/jhfrc-address2tract" target="_blank" rel="noopener">GitHub</a>
+      </nav>
     </div>
   </header>
 
-  <main class="wrap">
-    <section class="intro">
-      <h1>Address to Census Tract</h1>
-      <p class="lede">Upload a spreadsheet of addresses and get back the U.S. Census tract for each one. No software to install.</p>
-      <div class="privacy">
-        <strong>Your file stays on your computer.</strong>
-        It is opened and processed inside this browser tab and is never uploaded to or stored on this site.
-        Only the address text of each record is sent to the U.S. Census Bureau geocoder (and, for addresses
-        the Census cannot find, to the OpenStreetMap Nominatim geocoder) to look up its location.
+  <section class="hero" id="top">
+    <div class="wrap hero-inner">
+      <p class="eyebrow">Free tool for JHFRC partners</p>
+      <h1>Turn addresses into Census tracts, right in your browser.</h1>
+      <p class="lede">Upload a spreadsheet, match your columns, and download the tract for every address. No software to install, and your file never leaves your computer.</p>
+      <ul class="badges">
+        <li><svg class="ic"><use href="#i-shield"/></svg> Runs in your browser</li>
+        <li><svg class="ic"><use href="#i-check"/></svg> Privacy screen built in</li>
+        <li><svg class="ic"><use href="#i-file"/></svg> Excel and CSV</li>
+      </ul>
+      <div class="hero-actions">
+        <a class="btn primary lg" href="#app"><svg class="ic"><use href="#i-upload"/></svg> Start with your file</a>
+        <button class="btn ghost lg" type="button" data-action="sample"><svg class="ic"><use href="#i-play"/></svg> Try it with sample data</button>
       </div>
-    </section>
+    </div>
+  </section>
 
-    <!-- Step 1: file -->
-    <section class="card" id="step-file">
-      <h2><span class="num">1</span> Choose your file</h2>
+  <main id="app" class="wrap app" tabindex="-1">
+    <ol class="stepper" aria-label="Progress">
+      <li data-step="1" class="active"><span class="dot">1</span><span class="lbl">Upload</span></li>
+      <li data-step="2"><span class="dot">2</span><span class="lbl">Columns</span></li>
+      <li data-step="3"><span class="dot">3</span><span class="lbl">Process</span></li>
+      <li data-step="4"><span class="dot">4</span><span class="lbl">Results</span></li>
+    </ol>
+
+    <!-- Step 1: upload -->
+    <section class="panel" data-panel="1" aria-labelledby="h1">
+      <header class="panel-head">
+        <h2 id="h1" tabindex="-1">Upload your file</h2>
+        <p>An Excel (.xlsx, .xls) or CSV file with a unique ID column and the address column(s).</p>
+      </header>
+
       <label class="drop" id="drop">
         <input type="file" id="file" accept=".xlsx,.xls,.csv">
-        <span class="drop-main">Click to choose a file, or drag it here</span>
-        <span class="drop-sub">Excel (.xlsx, .xls) or CSV, up to <span id="max-rows"></span> rows</span>
+        <span class="drop-icon"><svg class="ic"><use href="#i-upload"/></svg></span>
+        <span class="drop-main">Drag and drop your file here</span>
+        <span class="drop-sub">or <span class="linkish">browse your computer</span> &middot; up to <span data-max-rows></span> rows per run</span>
       </label>
-      <div class="file-info" id="file-info" hidden></div>
-      <div class="field" id="sheet-field" hidden>
+
+      <div class="file-card" id="file-card" hidden>
+        <span class="file-icon"><svg class="ic"><use href="#i-file"/></svg></span>
+        <div class="file-meta">
+          <strong id="file-name"></strong>
+          <span id="file-stats"></span>
+        </div>
+        <button class="icon-btn" type="button" id="file-remove" aria-label="Remove file"><svg class="ic"><use href="#i-x"/></svg></button>
+      </div>
+
+      <div class="field inline" id="sheet-field" hidden>
         <label for="sheet">Sheet</label>
         <select id="sheet"></select>
       </div>
-      <p class="hint">Include only an ID column and the address column(s). Remove names, dates of birth, phone numbers and other personal details before you start.</p>
+
+      <div class="notice ok" id="privacy-ok" hidden>
+        <svg class="ic"><use href="#i-shield"/></svg>
+        <div><strong>Privacy check passed.</strong> <span id="privacy-ok-text"></span></div>
+      </div>
+      <div class="notice error" id="file-error" role="alert" hidden>
+        <svg class="ic"><use href="#i-alert"/></svg>
+        <div id="file-error-text"></div>
+      </div>
+
+      <div class="notice warn" id="too-big" hidden>
+        <svg class="ic"><use href="#i-scissors"/></svg>
+        <div>
+          <strong id="too-big-title"></strong>
+          <p>The website processes up to <span data-max-rows></span> rows per run. Split the file into parts and run them one after another, or use the
+            <a href="https://github.com/amohith7/jhfrc-address2tract#first-time-setup-once" target="_blank" rel="noopener">command-line tool</a>, which is much faster for large files.</p>
+          <button class="btn" type="button" id="split-btn"><svg class="ic"><use href="#i-download"/></svg> <span id="split-label"></span></button>
+        </div>
+      </div>
+
+      <div class="panel-foot">
+        <button class="btn ghost" type="button" data-action="sample"><svg class="ic"><use href="#i-play"/></svg> Use sample data</button>
+        <button class="btn primary" type="button" id="to-columns" disabled>Continue <svg class="ic"><use href="#i-right"/></svg></button>
+      </div>
     </section>
 
     <!-- Step 2: columns -->
-    <section class="card" id="step-columns" hidden>
-      <h2><span class="num">2</span> Match your columns</h2>
-      <div class="field">
-        <label for="col-id">Unique ID column</label>
-        <select id="col-id"></select>
+    <section class="panel" data-panel="2" aria-labelledby="h2" hidden>
+      <header class="panel-head">
+        <h2 id="h2" tabindex="-1">Match your columns</h2>
+        <p>We guessed from your column names. Check them against the preview below.</p>
+      </header>
+
+      <div class="map-grid">
+        <div class="field">
+          <label for="col-id">Unique ID column <span class="req">required</span></label>
+          <select id="col-id"></select>
+        </div>
+        <fieldset class="segmented" aria-label="How are the addresses stored?">
+          <legend>How are the addresses stored?</legend>
+          <label><input type="radio" name="mode" value="split" checked><span>Separate columns</span></label>
+          <label><input type="radio" name="mode" value="single"><span>One full-address column</span></label>
+        </fieldset>
       </div>
-      <fieldset class="mode">
-        <legend>How are the addresses stored?</legend>
-        <label><input type="radio" name="mode" value="split" checked> Separate street, city, state and ZIP columns</label>
-        <label><input type="radio" name="mode" value="single"> One column with the full address</label>
-      </fieldset>
-      <div id="split-fields" class="grid">
-        <div class="field"><label for="col-street">Street</label><select id="col-street"></select></div>
+
+      <div class="grid4" id="split-fields">
+        <div class="field"><label for="col-street">Street <span class="req">required</span></label><select id="col-street"></select></div>
         <div class="field"><label for="col-city">City</label><select id="col-city"></select></div>
         <div class="field"><label for="col-state">State</label><select id="col-state"></select></div>
         <div class="field"><label for="col-zip">ZIP</label><select id="col-zip"></select></div>
       </div>
       <div id="single-fields" hidden>
-        <div class="field"><label for="col-address">Full address</label><select id="col-address"></select></div>
+        <div class="field"><label for="col-address">Full address <span class="req">required</span></label><select id="col-address"></select></div>
       </div>
-      <div class="alert" id="column-error" role="alert" hidden></div>
-      <div class="actions">
-        <button class="btn primary" id="start" type="button">Find census tracts</button>
+
+      <div class="example" id="example" aria-live="polite"></div>
+
+      <div class="preview">
+        <div class="preview-head">Preview <span class="muted">(first 5 rows, shown only on your screen)</span></div>
+        <div class="table-scroll"><table class="data" id="preview"></table></div>
+      </div>
+
+      <div class="notice error" id="column-error" role="alert" hidden>
+        <svg class="ic"><use href="#i-alert"/></svg>
+        <div id="column-error-text"></div>
+      </div>
+
+      <div class="panel-foot">
+        <button class="btn ghost" type="button" data-back="1"><svg class="ic"><use href="#i-left"/></svg> Back</button>
+        <button class="btn primary" type="button" id="start"><svg class="ic"><use href="#i-sparkle"/></svg> Find census tracts</button>
       </div>
     </section>
 
-    <!-- Step 3: progress -->
-    <section class="card" id="step-run" hidden>
-      <h2><span class="num">3</span> Finding census tracts</h2>
-      <p id="run-stage" aria-live="polite">Starting...</p>
-      <div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" id="bar"><div id="bar-fill"></div></div>
-      <p class="hint" id="run-detail"></p>
-      <p class="hint">Keep this tab open until it finishes. Closing it stops the run.</p>
-      <div class="actions">
-        <button class="btn" id="cancel" type="button">Cancel</button>
+    <!-- Step 3: process -->
+    <section class="panel" data-panel="3" aria-labelledby="h3" hidden>
+      <header class="panel-head">
+        <h2 id="h3" tabindex="-1">Finding census tracts</h2>
+        <p>Keep this tab open until it finishes. <span id="elapsed" class="muted"></span></p>
+      </header>
+
+      <div class="run-grid">
+        <div>
+          <ol class="stages" id="stages">
+            <li data-stage="census"><span class="st-dot"></span><div><strong>U.S. Census geocoder</strong><span>Current and 2020 address files</span></div></li>
+            <li data-stage="retry"><span class="st-dot"></span><div><strong>Retry network errors</strong><span>Only if a lookup failed to connect</span></div></li>
+            <li data-stage="external"><span class="st-dot"></span><div><strong>OpenStreetMap</strong><span>Remaining addresses, about 1 per second</span></div></li>
+          </ol>
+          <div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" id="bar"><div id="bar-fill"></div></div>
+          <p class="run-detail" id="run-detail" aria-live="polite"></p>
+          <div class="counters" id="counters"></div>
+        </div>
+        <div class="feed-box">
+          <div class="feed-head">Live activity</div>
+          <ul class="feed" id="feed" aria-live="off"></ul>
+        </div>
+      </div>
+
+      <div class="panel-foot">
+        <span></span>
+        <button class="btn" type="button" id="cancel"><svg class="ic"><use href="#i-x"/></svg> Cancel</button>
       </div>
     </section>
 
     <!-- Step 4: results -->
-    <section class="card" id="step-results" hidden>
-      <h2><span class="num">4</span> Results</h2>
-      <div class="tiles" id="tiles"></div>
-      <table class="methods" id="methods"></table>
-      <div class="downloads">
-        <div class="download">
-          <button class="btn primary" id="dl-share" type="button">Download results_to_share.xlsx</button>
-          <p><strong>Send this file to JHFRC.</strong> It contains only the ID, census tract and match status, with no addresses.</p>
-        </div>
-        <div class="download">
-          <button class="btn" id="dl-full" type="button">Download results.xlsx</button>
-          <p><strong>Keep this file on your computer.</strong> It includes the addresses so you can review unmatched records. Do not share it.</p>
-        </div>
+    <section class="panel" data-panel="4" aria-labelledby="h4" hidden>
+      <header class="panel-head">
+        <h2 id="h4" tabindex="-1">Results</h2>
+        <p id="results-sub"></p>
+      </header>
+
+      <div class="kpis" id="kpis"></div>
+      <div class="breakdown">
+        <div class="stack" id="stack" role="img"></div>
+        <ul class="legend" id="legend"></ul>
       </div>
-      <div class="actions">
-        <button class="btn link" id="again" type="button">Start over with another file</button>
+
+      <div class="downloads">
+        <button class="dl primary" type="button" id="dl-share">
+          <span class="dl-icon"><svg class="ic"><use href="#i-download"/></svg></span>
+          <span class="dl-text"><strong>results_to_share.xlsx</strong><span>Send this to JHFRC. ID, tract and status only, no addresses.</span></span>
+        </button>
+        <button class="dl" type="button" id="dl-full">
+          <span class="dl-icon"><svg class="ic"><use href="#i-download"/></svg></span>
+          <span class="dl-text"><strong>results.xlsx</strong><span>Keep on your computer. Includes addresses for your review.</span></span>
+        </button>
+      </div>
+
+      <div class="notice info" id="fix-hint" hidden>
+        <svg class="ic"><use href="#i-refresh"/></svg>
+        <div><strong id="fix-hint-title"></strong> Correct typos or missing street numbers in the table below, then retry just those rows.
+          <button class="btn sm" type="button" id="show-unmatched">Show unmatched</button></div>
+      </div>
+
+      <div class="table-tools">
+        <div class="chips" id="chips" role="toolbar" aria-label="Filter by status"></div>
+        <label class="search"><svg class="ic"><use href="#i-search"/></svg><input type="search" id="search" placeholder="Search ID, address or tract" aria-label="Search results"></label>
+      </div>
+      <div class="table-scroll"><table class="data results" id="results"></table></div>
+      <div class="pager" id="pager"></div>
+
+      <div class="panel-foot">
+        <button class="btn ghost" type="button" id="again"><svg class="ic"><use href="#i-refresh"/></svg> Start over with another file</button>
+        <span></span>
       </div>
     </section>
 
-    <section class="faq">
-      <h2>Questions</h2>
+    <div class="action-bar" id="action-bar" hidden>
+      <span id="action-text"></span>
+      <button class="btn ghost sm" type="button" id="discard-edits">Discard</button>
+      <button class="btn primary sm" type="button" id="retry-edits"><svg class="ic"><use href="#i-refresh"/></svg> <span id="retry-label">Retry edited rows</span></button>
+    </div>
+  </main>
+
+  <section class="section" id="how">
+    <div class="wrap">
+      <h2 class="section-title">How it works</h2>
+      <div class="cards3">
+        <article class="info-card"><span class="num">1</span><h3>Upload</h3><p>Choose a spreadsheet with an ID and address columns. It is read inside this tab and checked for personal details before anything else happens.</p></article>
+        <article class="info-card"><span class="num">2</span><h3>Match</h3><p>Each address is looked up with the U.S. Census Bureau geocoder, then OpenStreetMap for the few the Census cannot find.</p></article>
+        <article class="info-card"><span class="num">3</span><h3>Download</h3><p>Review the results, fix any unmatched addresses, and download a share file with only the ID, tract and match status.</p></article>
+      </div>
+    </div>
+  </section>
+
+  <section class="section alt" id="privacy">
+    <div class="wrap privacy-grid">
+      <div>
+        <h2 class="section-title">Your data stays with you</h2>
+        <p>The file is opened and processed in this browser tab. It is never uploaded to or stored on this website. Only the address text of each record is sent to the U.S. Census Bureau geocoder, and for addresses the Census cannot find, to the OpenStreetMap Nominatim geocoder.</p>
+      </div>
+      <ul class="checks">
+        <li><svg class="ic"><use href="#i-check"/></svg> Files with sensitive column names (name, DOB, phone, email and others) are refused at upload.</li>
+        <li><svg class="ic"><use href="#i-check"/></svg> Cells that look like emails, phone numbers, SSNs, dates or names before an address are refused too.</li>
+        <li><svg class="ic"><use href="#i-check"/></svg> The file you send to JHFRC holds only the ID, tract and match status.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="section" id="faq">
+    <div class="wrap narrow">
+      <h2 class="section-title">Questions</h2>
       <details>
         <summary>What do the match statuses mean?</summary>
         <dl>
@@ -123,25 +297,32 @@
         <p>The Census Bureau's current tract boundaries, as returned by the Census geocoder. Tract codes are 11 digits: state (2), county (3) and tract (6).</p>
       </details>
       <details>
-        <summary>My file is larger than the limit.</summary>
-        <p>Split it into smaller files, or contact us to use the command-line version of this tool, which is built for large files.</p>
+        <summary>My file has more than <span data-max-rows></span> rows.</summary>
+        <p>The page offers to split it into parts you can run one after another. For very large files, the command-line version of this tool is much faster.</p>
       </details>
-    </section>
-  </main>
+      <details>
+        <summary>I fixed an address. Which file shows the change?</summary>
+        <p><code>results.xlsx</code> gains a <code>corrected_address</code> column next to your original address, so you can update your own records. The share file is unchanged in format.</p>
+      </details>
+    </div>
+  </section>
 
   <footer class="site-footer">
-    <div class="wrap">
-      <p>Built by the Journey Health Foundation Research Center, University of Tennessee at Chattanooga.
-        Questions: <a href="mailto:mohith-addepalli@utc.edu">mohith-addepalli@utc.edu</a></p>
-      <p>Geocoding by the <a href="https://geocoding.geo.census.gov/">U.S. Census Bureau</a> and
-        <a href="https://nominatim.openstreetmap.org/">Nominatim</a> (data &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>, ODbL).
-        <a href="https://github.com/amohith7/jhfrc-address2tract">Source code</a>.</p>
+    <div class="wrap footer-inner">
+      <img class="logo" src="assets/utc24-jhf-shrt-hrz-logo-inverted-rgb.svg" alt="UTC Journey Health Foundation">
+      <div>
+        <p>Built by the Journey Health Foundation Research Center, University of Tennessee at Chattanooga. Questions: <a href="mailto:mohith-addepalli@utc.edu">mohith-addepalli@utc.edu</a></p>
+        <p>Geocoding by the <a href="https://geocoding.geo.census.gov/">U.S. Census Bureau</a> and <a href="https://nominatim.openstreetmap.org/">Nominatim</a> (data &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>, ODbL). <a href="https://github.com/amohith7/jhfrc-address2tract">Source code</a>.</p>
+      </div>
     </div>
   </footer>
 
+  <div class="toasts" id="toasts" aria-live="polite" aria-atomic="false"></div>
+
   <script src="assets/vendor/xlsx.full.min.js?v=cc015130"></script>
   <script src="assets/core.js?v=e4e47fc9"></script>
-  <script src="assets/geocoder.js?v=bda50568"></script>
-  <script src="assets/app.js?v=9707a7f0"></script>
+  <script src="assets/geocoder.js?v=2c9e84c0"></script>
+  <script src="assets/sample.js?v=f882679f"></script>
+  <script src="assets/app.js?v=3dcdbc94"></script>
 </body>
 </html>

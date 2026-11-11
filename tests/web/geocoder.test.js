@@ -200,3 +200,26 @@ test("cancelling stops the run", async () => {
   await assert.rejects(G.run(records(rows), { transport: t, signal: controller.signal }), G.Cancelled);
   assert.ok(t.calls.census.length < 40);
 });
+
+test("onRecord fires once per finished lookup, and a corrected address is reported", async () => {
+  const t = fakeTransport({
+    census: (a) => (a.startsWith("615 ") ? censusMatch(-85.3, 35.04, "47065012400", "615 MCCALLIE AVE") : NO_MATCH),
+  });
+  const recs = records([
+    { id: "1", addr: "615 McCallie Ave, Chattanooga, TN" },
+    { id: "2", addr: "61 McCalie Av, Chattanooga, TN" },
+  ]);
+  const seen = [];
+  await G.run(recs, { transport: t, onRecord: (r) => seen.push(r.id), options: { externalMaxResidual: 0 } });
+  assert.deepEqual(seen.sort(), ["1", "2"]);
+
+  // The user fixes row 2 on the results page and retries only that row.
+  recs[1].address = recs[1].corrected_address = "615 McCallie Ave, Chattanooga, TN";
+  await G.run([recs[1]], { transport: t, options: { externalMaxResidual: 0 } });
+  assert.equal(recs[1].match_status, "Matched");
+  const out = G.resultRows(recs, COLS);
+  assert.equal(out[0].corrected_address, "");
+  assert.equal(out[1].corrected_address, "615 McCallie Ave, Chattanooga, TN");
+  assert.equal(out[1].addr, "61 McCalie Av, Chattanooga, TN"); // original input kept
+  assert.ok(!("corrected_address" in G.shareRows(recs, COLS)[1]));
+});
