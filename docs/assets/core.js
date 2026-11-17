@@ -209,6 +209,24 @@
     return null;
   }
 
+  // ArcGIS address types at street/house precision, and the minimum score
+  // (src/geocode_external.py _ARCGIS_OK_ADDR_TYPES / _ARCGIS_MIN_SCORE).
+  const ARCGIS_OK_ADDR_TYPES = new Set(["PointAddress", "StreetAddress", "StreetInt", "Subaddress"]);
+  const ARCGIS_MIN_SCORE = 90;
+
+  /** First precise ArcGIS candidate as {lat, lon}, or null. */
+  function pickArcgis(candidates) {
+    for (const c of candidates || []) {
+      const attrs = c.attributes || {};
+      const score = parseFloat(c.score != null ? c.score : attrs.Score) || 0;
+      const loc = c.location || {};
+      if (ARCGIS_OK_ADDR_TYPES.has(attrs.Addr_type) && score >= ARCGIS_MIN_SCORE && loc.x != null && loc.y != null) {
+        return { lat: parseFloat(loc.y), lon: parseFloat(loc.x) };
+      }
+    }
+    return null;
+  }
+
   /** 11-digit tract GEOID, or "" when it is not a valid tract code. */
   function cleanGeoid(value) {
     const s = cleanCell(value).replace(/\D/g, "");
@@ -256,6 +274,6 @@
   return {
     cleanCell, isBlank, normalizeZip, combineAddress, normalizeStreet,
     normalizeAddressStreet, checkForPhi, scanCellsForPhi, findDuplicateIds, isGeocodable, isPoBox,
-    nominatimPrecise, pickNominatim, cleanGeoid, guessColumns, tally,
+    nominatimPrecise, pickNominatim, pickArcgis, cleanGeoid, guessColumns, tally,
   };
 });
