@@ -251,6 +251,12 @@
     for (const [key, names] of Object.entries(GUESSES)) {
       out[key] = columns.find((c) => names.includes(norm(c))) || "";
     }
+    // An "address" column next to city/state/ZIP columns holds only the
+    // street, so treat it as the street column, not a full address.
+    if (!out.street && out.address && (out.city || out.state || out.zip)) {
+      out.street = out.address;
+      out.address = "";
+    }
     return out;
   }
 

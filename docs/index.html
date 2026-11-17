@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600&family=Raleway:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="assets/style.css?v=2f315bd1">
+  <link rel="stylesheet" href="assets/style.css?v=d37bed04">
 </head>
 <body>
   <a class="skip" href="#app">Skip to the tool</a>
@@ -163,8 +163,8 @@
         <div class="table-scroll"><table class="data" id="preview"></table></div>
       </div>
 
-      <fieldset class="arcgis-box" id="arcgis-box" hidden>
-        <legend><svg class="ic"><use href="#i-shield"/></svg> ArcGIS lookup <span class="muted">(optional)</span></legend>
+      <details class="arcgis-box" id="arcgis-box">
+        <summary><svg class="ic"><use href="#i-shield"/></svg> Advanced: ArcGIS lookup <span class="muted">(optional, needs a token from JHFRC)</span></summary>
         <p>If JHFRC sent you a temporary ArcGIS token, paste it here. Addresses the Census cannot find are then looked up with the ArcGIS World Geocoder instead of OpenStreetMap. Leave it blank to skip.</p>
         <div class="token-row">
           <label class="sr-only" for="arcgis-token">ArcGIS token</label>
@@ -175,7 +175,7 @@
         <p class="token-status" id="arcgis-status" aria-live="polite" hidden></p>
         <label class="check"><input type="checkbox" id="arcgis-show"> Show token</label>
         <p class="muted small">The token stays in this tab only. It is never saved, never added to the page address and never written to your results files, and it is sent only to ArcGIS. Closing the tab forgets it.</p>
-      </fieldset>
+      </details>
 
       <div class="notice error" id="column-error" role="alert" hidden>
         <svg class="ic"><use href="#i-alert"/></svg>
@@ -289,7 +289,7 @@
       <div>
         <h2 class="section-title">Your data stays with you</h2>
         <p>The file is opened and processed in this browser tab. It is never uploaded to or stored on this website. Only the address text of each record is sent to the U.S. Census Bureau geocoder, and for addresses the Census cannot find, to the OpenStreetMap Nominatim geocoder.</p>
-        <p id="privacy-arcgis" hidden>On this ArcGIS link, if you enter a token, addresses the Census cannot find go to the Esri ArcGIS World Geocoder instead of OpenStreetMap. The token is kept only in this tab and sent only to ArcGIS. ArcGIS geocoding is powered by Esri.</p>
+        <p id="privacy-arcgis">If you enter an ArcGIS token (under Advanced on the Columns step), addresses the Census cannot find go to the Esri ArcGIS World Geocoder instead of OpenStreetMap. The token is kept only in this tab and sent only to ArcGIS. ArcGIS geocoding is powered by Esri.</p>
       </div>
       <ul class="checks">
         <li><svg class="ic"><use href="#i-check"/></svg> Files with sensitive column names (name, DOB, phone, email and others) are refused at upload.</li>
@@ -340,9 +340,9 @@
   <div class="toasts" id="toasts" aria-live="polite" aria-atomic="false"></div>
 
   <script src="assets/vendor/xlsx.full.min.js?v=cc015130"></script>
-  <script src="assets/core.js?v=cfa81455"></script>
+  <script src="assets/core.js?v=23c71086"></script>
   <script src="assets/geocoder.js?v=85690ccd"></script>
   <script src="assets/sample.js?v=f882679f"></script>
-  <script src="assets/app.js?v=bfdbb1dd"></script>
+  <script src="assets/app.js?v=dbe511f4"></script>
 </body>
 </html>
