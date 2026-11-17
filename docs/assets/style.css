@@ -288,10 +288,10 @@ tr.flash { animation: flash 1.6s var(--ease); }
 .checks .ic { color: var(--ok); margin-top: 3px; }
 details { background: var(--card); border: 1px solid var(--line); border-radius: 10px; margin: 10px 0; transition: box-shadow .2s; }
 details[open] { box-shadow: var(--shadow); }
-summary { cursor: pointer; font-weight: 700; color: var(--navy); padding: 14px 16px; list-style: none; display: flex; justify-content: space-between; align-items: center; }
+summary { cursor: pointer; font-weight: 700; color: var(--navy); padding: 14px 48px 14px 16px; list-style: none; display: block; position: relative; }
 summary::-webkit-details-marker { display: none; }
-summary::after { content: "+"; font: 400 1.4rem/1 var(--heading); color: var(--muted); transition: transform .2s; }
-details[open] summary::after { transform: rotate(45deg); }
+summary::after { content: "+"; position: absolute; right: 18px; top: 50%; transform: translateY(-50%); font: 400 1.4rem/1 var(--heading); color: var(--muted); transition: transform .2s; }
+details[open] summary::after { transform: translateY(-50%) rotate(45deg); }
 details > p, details > dl { margin: 0; padding: 0 16px 14px; }
 dt { font-weight: 700; margin-top: 8px; }
 dd { margin: 0 0 4px; color: var(--muted); }
