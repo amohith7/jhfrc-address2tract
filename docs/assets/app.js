@@ -154,14 +154,14 @@
 
   // ------------------------------------------------------------ ArcGIS mode
 
-  // Shown only when the page is opened from the link JHFRC sends with a token
-  // (https://amohith7.github.io/jhfrc-address2tract/#arcgis). The hash never
-  // reaches the server. The token itself lives only in this page's memory:
-  // never saved in the browser, put in a URL or written to a results file.
-  const ARCGIS_MODE = /(^|[#&])arcgis\b/i.test(location.hash);
+  // The ArcGIS box sits collapsed under "Advanced" on the Columns step. Older
+  // links ending in #arcgis open it automatically. The token lives only in
+  // this page's memory: never saved in the browser, put in a URL or written
+  // to a results file.
+  const ARCGIS_LINK = /(^|[#&])arcgis\b/i.test(location.hash);
 
   function arcgisToken() {
-    return ARCGIS_MODE ? $("arcgis-token").value.trim() : "";
+    return $("arcgis-token").value.trim();
   }
 
   /** Label the external step after whichever provider will run. */
@@ -176,9 +176,7 @@
   }
 
   function initArcgis() {
-    if (!ARCGIS_MODE) return;
-    $("arcgis-box").hidden = false;
-    $("privacy-arcgis").hidden = false;
+    if (ARCGIS_LINK) $("arcgis-box").open = true;
     const input = $("arcgis-token");
     $("arcgis-show").addEventListener("change", (e) => (input.type = e.target.checked ? "text" : "password"));
     const status = $("arcgis-status");

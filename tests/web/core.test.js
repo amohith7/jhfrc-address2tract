@@ -146,3 +146,14 @@ test("pickArcgis keeps only street/house matches scoring at least 90", () => {
   assert.deepEqual(A2T.pickArcgis([{ location: { x: 1, y: 2 }, attributes: { Addr_type: "PointAddress", Score: 95 } }]), { lat: 2, lon: 1 });
   assert.equal(A2T.pickArcgis(undefined), null);
 });
+
+test("guessColumns: a lone address column is a full address; next to city/ZIP it is the street", () => {
+  assert.deepEqual(
+    A2T.guessColumns(["client_id", "Full Address"]),
+    { id: "client_id", address: "Full Address", street: "", city: "", state: "", zip: "" }
+  );
+  const g = A2T.guessColumns(["id", "Address", "City", "State", "ZIP"]);
+  assert.equal(g.street, "Address");
+  assert.equal(g.address, "");
+  assert.equal(g.city, "City");
+});
