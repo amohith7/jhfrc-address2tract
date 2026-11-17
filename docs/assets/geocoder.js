@@ -33,8 +33,15 @@
   const ONELINE_URL = CENSUS + "onelineaddress";
   const COORDS_URL = CENSUS + "coordinates";
   const NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";
-  const ARCGIS_URL =
-    "https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/findAddressCandidates";
+  // Esri documents geocode-api for API keys; geocode.arcgis.com is the older
+  // host that ArcGIS Online tokens (and the CLI) use. A token refused by one
+  // is tried on the other before the step gives up.
+  const ARCGIS_PATH = "/arcgis/rest/services/World/GeocodeServer/findAddressCandidates";
+  const ARCGIS_URLS = [
+    "https://geocode-api.arcgis.com" + ARCGIS_PATH,
+    "https://geocode.arcgis.com" + ARCGIS_PATH,
+  ];
+  const ARCGIS_TEST_ADDRESS = "1600 Pennsylvania Ave NW, Washington, DC 20500";
 
   // (benchmark, vintage) pairs swept in order (geocode.FALLBACK_BENCHMARKS).
   const BENCHMARKS = [
@@ -234,41 +241,87 @@
     rec.error_reason = tract ? "" : REASON_NO_TRACT;
   }
 
-  /** Plain-language text for an ArcGIS {error: {...}} payload. */
+  /**
+   * Plain-language text for an ArcGIS {error: {...}} payload, ending with
+   * ArcGIS's own code and message so a token problem can be diagnosed.
+   */
   function arcgisErrorText(error) {
     const code = Number(error && error.code);
-    const msg = String((error && (error.message || error.details)) || "").trim();
-    if (code === 498 || code === 499 || /token/i.test(msg)) {
-      return "ArcGIS did not accept the token (it may be mistyped or expired)";
+    const details = Array.isArray(error && error.details) ? error.details.join(" ") : "";
+    const msg = String((error && error.message) || "").trim();
+    const raw = [msg, details].filter(Boolean).join(" ").trim();
+    const said = " (ArcGIS said: " + (code ? code + " " : "") + (raw || "no details") + ")";
+    if (code === 498 || code === 499 || /token/i.test(raw)) {
+      return "ArcGIS did not accept the token" + said;
     }
-    if (code === 403) return "ArcGIS refused the request (the token may lack geocoding rights or credits)";
-    return "ArcGIS returned an error" + (msg ? ": " + msg : "");
+    if (code === 403) return "ArcGIS refused the request; the token may lack geocoding rights or credits" + said;
+    return "ArcGIS returned an error" + said;
   }
 
-  async function geocodeArcgis(rec, ctx) {
+  /** Tokens never contain whitespace; drop any picked up when copying. */
+  function cleanToken(token) {
+    return String(token || "").replace(/\s+/g, "");
+  }
+
+  /**
+   * One ArcGIS request. Until a host has accepted the token, a refusal is
+   * retried on the other host; the host that works is used from then on.
+   * Throws ProviderError if every host refuses, or a network error.
+   */
+  async function arcgisRequest(address, ctx) {
     const params = {
-      SingleLine: rec.address,
+      SingleLine: address,
       f: "json",
       maxLocations: 5,
       outFields: "Addr_type,Score",
       countryCode: "USA",
-      token: ctx.opts.arcgisToken,
+      token: cleanToken(ctx.opts.arcgisToken),
     };
-    let payload;
-    try {
-      payload = await withRetry(
-        () => ctx.transport.postForm(ARCGIS_URL, params),
+    const order = ctx.arcgisHost != null ? [ctx.arcgisHost] : ARCGIS_URLS.map((_, i) => i);
+    let firstError = null;
+    for (const i of order) {
+      const payload = await withRetry(
+        () => ctx.transport.postForm(ARCGIS_URLS[i], params),
         ctx.transport,
         2,
         ctx.signal
       );
+      // ArcGIS answers token and quota problems with HTTP 200 and an error body.
+      if (payload && payload.error) {
+        firstError = firstError || payload.error;
+        continue;
+      }
+      ctx.arcgisHost = i;
+      return payload;
+    }
+    throw new ProviderError(arcgisErrorText(firstError));
+  }
+
+  /**
+   * Check a token with one public test address before a run.
+   * Resolves {ok: true} or {ok: false, message}.
+   */
+  async function checkArcgisToken(transport, token) {
+    const ctx = { transport, signal: null, opts: { ...DEFAULTS, arcgisToken: token } };
+    if (!cleanToken(token)) return { ok: false, message: "Paste a token first" };
+    try {
+      await arcgisRequest(ARCGIS_TEST_ADDRESS, ctx);
+      return { ok: true };
     } catch (err) {
-      if (err instanceof Cancelled) throw err;
+      if (err instanceof ProviderError) return { ok: false, message: err.message };
+      return { ok: false, message: "Could not reach ArcGIS (" + err.message + ")" };
+    }
+  }
+
+  async function geocodeArcgis(rec, ctx) {
+    let payload;
+    try {
+      payload = await arcgisRequest(rec.address, ctx);
+    } catch (err) {
+      if (err instanceof Cancelled || err instanceof ProviderError) throw err;
       rec.arcgisTried = true;
       return; // network trouble for this row only; it stays No_Match
     }
-    // ArcGIS answers token and quota problems with HTTP 200 and an error body.
-    if (payload && payload.error) throw new ProviderError(arcgisErrorText(payload.error));
     rec.arcgisTried = true;
     const point = A2T.pickArcgis(payload && payload.candidates);
     if (!point) return;
@@ -433,5 +486,7 @@
     }));
   }
 
-  return { buildRecords, run, resultRows, shareRows, Cancelled, ProviderError, DEFAULTS };
+  return {
+    buildRecords, run, resultRows, shareRows, checkArcgisToken, Cancelled, ProviderError, DEFAULTS,
+  };
 });

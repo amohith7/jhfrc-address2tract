@@ -280,8 +280,8 @@ test("a refused token stops the ArcGIS step and is reported, not hidden as No_Ma
     onProviderError: (m) => errors.push(m),
   });
   assert.equal(errors.length, 1);
-  assert.match(errors[0], /did not accept the token/);
-  assert.ok(t.calls.arcgis.length <= 2, "workers stop after the first refusal");
+  assert.match(errors[0], /did not accept the token \(ArcGIS said: 498 Invalid token\.\)/);
+  assert.ok(t.calls.arcgis.length <= 4, "workers stop after the first refusal (2 workers x 2 hosts)");
   for (const r of recs) {
     assert.equal(r.match_status, "No_Match");
     assert.match(r.error_reason, /did not accept the token/);
@@ -296,4 +296,36 @@ test("without a token the residual still goes to Nominatim", async () => {
   await G.run(records([{ id: "1", addr: "1 Main St, Town, TN" }]), { transport: t });
   assert.equal(t.calls.arcgis.length, 0);
   assert.equal(t.calls.nominatim.length, 1);
+});
+
+test("a token refused by geocode-api is retried on geocode.arcgis.com, which is then kept", async () => {
+  const t = fakeTransport({ census: () => NO_MATCH, coords: () => "47065012400" });
+  t.calls.arcgis = [];
+  t.postForm = async (url, p) => {
+    t.calls.arcgis.push({ url, token: p.token });
+    if (url.startsWith("https://geocode-api.")) return { error: { code: 498, message: "Invalid Token" } };
+    return { candidates: [arcgisCandidate(-85.29, 35.04)] };
+  };
+  const rows = [1, 2, 3].map((i) => ({ id: String(i), addr: i + " Main St, Town, TN" }));
+  const recs = await G.run(records(rows), {
+    transport: t,
+    options: { arcgisToken: "  AAPK-line1\n line2  ", arcgisConcurrency: 1 },
+  });
+  assert.ok(recs.every((r) => r.match_status === "Matched_External"));
+  assert.equal(t.calls.arcgis[0].url.startsWith("https://geocode-api."), true);
+  assert.equal(t.calls.arcgis.length, 4, "one refused probe, then the working host for all three");
+  assert.ok(t.calls.arcgis.slice(1).every((c) => c.url.startsWith("https://geocode.arcgis.com")));
+  assert.ok(t.calls.arcgis.every((c) => c.token === "AAPK-line1line2"), "whitespace removed from the token");
+});
+
+test("checkArcgisToken reports success, ArcGIS's own error, and network trouble", async () => {
+  const ok = { postForm: async () => ({ candidates: [] }), sleep: async () => {} };
+  assert.deepEqual(await G.checkArcgisToken(ok, "T"), { ok: true });
+  const bad = { postForm: async () => ({ error: { code: 403, message: "User does not have permissions.", details: [] } }), sleep: async () => {} };
+  const r = await G.checkArcgisToken(bad, "T");
+  assert.equal(r.ok, false);
+  assert.match(r.message, /geocoding rights or credits \(ArcGIS said: 403 User does not have permissions\.\)/);
+  const down = { postForm: async () => { throw new Error("Failed to fetch"); }, sleep: async () => {} };
+  assert.match((await G.checkArcgisToken(down, "T")).message, /Could not reach ArcGIS/);
+  assert.equal((await G.checkArcgisToken(ok, "   ")).ok, false);
 });
