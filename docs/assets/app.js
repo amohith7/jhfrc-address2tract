@@ -181,7 +181,27 @@
     $("privacy-arcgis").hidden = false;
     const input = $("arcgis-token");
     $("arcgis-show").addEventListener("change", (e) => (input.type = e.target.checked ? "text" : "password"));
+    const status = $("arcgis-status");
+    const setStatus = (kind, text) => {
+      status.className = "token-status " + kind;
+      status.textContent = text;
+      status.hidden = !text;
+    };
+    input.addEventListener("input", () => setStatus("", ""));
+    $("arcgis-check").addEventListener("click", async () => {
+      const btn = $("arcgis-check");
+      btn.classList.add("busy");
+      btn.disabled = true;
+      // One public landmark address (the White House) is sent, nothing from the file.
+      setStatus("", "Checking with ArcGIS using a public test address...");
+      const res = await A2TGeocoder.checkArcgisToken(transport, input.value);
+      btn.classList.remove("busy");
+      btn.disabled = false;
+      if (res.ok) setStatus("ok", "Token accepted by ArcGIS.");
+      else setStatus("bad", res.message + ".");
+    });
     $("arcgis-clear").addEventListener("click", () => {
+      setStatus("", "");
       input.value = "";
       input.type = "password";
       $("arcgis-show").checked = false;

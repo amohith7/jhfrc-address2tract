@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600&family=Raleway:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="assets/style.css?v=ff30112e">
+  <link rel="stylesheet" href="assets/style.css?v=e8619a81">
 </head>
 <body>
   <a class="skip" href="#app">Skip to the tool</a>
@@ -169,8 +169,10 @@
         <div class="token-row">
           <label class="sr-only" for="arcgis-token">ArcGIS token</label>
           <input type="password" id="arcgis-token" placeholder="Paste ArcGIS token" autocomplete="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore>
+          <button class="btn ghost sm" type="button" id="arcgis-check"><svg class="ic"><use href="#i-check"/></svg> Check token</button>
           <button class="btn ghost sm" type="button" id="arcgis-clear"><svg class="ic"><use href="#i-x"/></svg> Clear</button>
         </div>
+        <p class="token-status" id="arcgis-status" aria-live="polite" hidden></p>
         <label class="check"><input type="checkbox" id="arcgis-show"> Show token</label>
         <p class="muted small">The token stays in this tab only. It is never saved, never added to the page address and never written to your results files, and it is sent only to ArcGIS. Closing the tab forgets it.</p>
       </fieldset>
@@ -339,8 +341,8 @@
 
   <script src="assets/vendor/xlsx.full.min.js?v=cc015130"></script>
   <script src="assets/core.js?v=cfa81455"></script>
-  <script src="assets/geocoder.js?v=1b62a06c"></script>
+  <script src="assets/geocoder.js?v=85690ccd"></script>
   <script src="assets/sample.js?v=f882679f"></script>
-  <script src="assets/app.js?v=14e8a6e7"></script>
+  <script src="assets/app.js?v=bfdbb1dd"></script>
 </body>
 </html>
