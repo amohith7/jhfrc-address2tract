@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600&family=Raleway:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="assets/style.css?v=b8ade216">
+  <link rel="stylesheet" href="assets/style.css?v=ff30112e">
 </head>
 <body>
   <a class="skip" href="#app">Skip to the tool</a>
@@ -163,6 +163,18 @@
         <div class="table-scroll"><table class="data" id="preview"></table></div>
       </div>
 
+      <fieldset class="arcgis-box" id="arcgis-box" hidden>
+        <legend><svg class="ic"><use href="#i-shield"/></svg> ArcGIS lookup <span class="muted">(optional)</span></legend>
+        <p>If JHFRC sent you a temporary ArcGIS token, paste it here. Addresses the Census cannot find are then looked up with the ArcGIS World Geocoder instead of OpenStreetMap. Leave it blank to skip.</p>
+        <div class="token-row">
+          <label class="sr-only" for="arcgis-token">ArcGIS token</label>
+          <input type="password" id="arcgis-token" placeholder="Paste ArcGIS token" autocomplete="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore>
+          <button class="btn ghost sm" type="button" id="arcgis-clear"><svg class="ic"><use href="#i-x"/></svg> Clear</button>
+        </div>
+        <label class="check"><input type="checkbox" id="arcgis-show"> Show token</label>
+        <p class="muted small">The token stays in this tab only. It is never saved, never added to the page address and never written to your results files, and it is sent only to ArcGIS. Closing the tab forgets it.</p>
+      </fieldset>
+
       <div class="notice error" id="column-error" role="alert" hidden>
         <svg class="ic"><use href="#i-alert"/></svg>
         <div id="column-error-text"></div>
@@ -186,7 +198,7 @@
           <ol class="stages" id="stages">
             <li data-stage="census"><span class="st-dot"></span><div><strong>U.S. Census geocoder</strong><span>Current and 2020 address files</span></div></li>
             <li data-stage="retry"><span class="st-dot"></span><div><strong>Retry network errors</strong><span>Only if a lookup failed to connect</span></div></li>
-            <li data-stage="external"><span class="st-dot"></span><div><strong>OpenStreetMap</strong><span>Remaining addresses, about 1 per second</span></div></li>
+            <li data-stage="external"><span class="st-dot"></span><div><strong id="stage-external-name">OpenStreetMap</strong><span id="stage-external-note">Remaining addresses, about 1 per second</span></div></li>
           </ol>
           <div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" id="bar"><div id="bar-fill"></div></div>
           <p class="run-detail" id="run-detail" aria-live="polite"></p>
@@ -226,6 +238,11 @@
           <span class="dl-icon"><svg class="ic"><use href="#i-download"/></svg></span>
           <span class="dl-text"><strong>results.xlsx</strong><span>Keep on your computer. Includes addresses for your review.</span></span>
         </button>
+      </div>
+
+      <div class="notice error" id="provider-error" role="alert" hidden>
+        <svg class="ic"><use href="#i-alert"/></svg>
+        <div><strong>The ArcGIS step stopped.</strong> <span id="provider-error-text"></span></div>
       </div>
 
       <div class="notice info" id="fix-hint" hidden>
@@ -270,6 +287,7 @@
       <div>
         <h2 class="section-title">Your data stays with you</h2>
         <p>The file is opened and processed in this browser tab. It is never uploaded to or stored on this website. Only the address text of each record is sent to the U.S. Census Bureau geocoder, and for addresses the Census cannot find, to the OpenStreetMap Nominatim geocoder.</p>
+        <p id="privacy-arcgis" hidden>On this ArcGIS link, if you enter a token, addresses the Census cannot find go to the Esri ArcGIS World Geocoder instead of OpenStreetMap. The token is kept only in this tab and sent only to ArcGIS. ArcGIS geocoding is powered by Esri.</p>
       </div>
       <ul class="checks">
         <li><svg class="ic"><use href="#i-check"/></svg> Files with sensitive column names (name, DOB, phone, email and others) are refused at upload.</li>
@@ -320,9 +338,9 @@
   <div class="toasts" id="toasts" aria-live="polite" aria-atomic="false"></div>
 
   <script src="assets/vendor/xlsx.full.min.js?v=cc015130"></script>
-  <script src="assets/core.js?v=e4e47fc9"></script>
-  <script src="assets/geocoder.js?v=2c9e84c0"></script>
+  <script src="assets/core.js?v=cfa81455"></script>
+  <script src="assets/geocoder.js?v=1b62a06c"></script>
   <script src="assets/sample.js?v=f882679f"></script>
-  <script src="assets/app.js?v=3dcdbc94"></script>
+  <script src="assets/app.js?v=14e8a6e7"></script>
 </body>
 </html>

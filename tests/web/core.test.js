@@ -138,3 +138,11 @@ test("scanCellsForPhi leaves ordinary address files alone", () => {
   ];
   assert.deepEqual(A2T.scanCellsForPhi(rows, ["id", "street", "city", "zip"]), []);
 });
+
+test("pickArcgis keeps only street/house matches scoring at least 90", () => {
+  const cand = (type, score, x = -85.29, y = 35.04) => ({ location: { x, y }, score, attributes: { Addr_type: type } });
+  assert.equal(A2T.pickArcgis([cand("Locality", 100), cand("POI", 99), cand("StreetAddress", 89.9)]), null);
+  assert.deepEqual(A2T.pickArcgis([cand("PostalLoc", 100), cand("StreetAddress", 90)]), { lat: 35.04, lon: -85.29 });
+  assert.deepEqual(A2T.pickArcgis([{ location: { x: 1, y: 2 }, attributes: { Addr_type: "PointAddress", Score: 95 } }]), { lat: 2, lon: 1 });
+  assert.equal(A2T.pickArcgis(undefined), null);
+});

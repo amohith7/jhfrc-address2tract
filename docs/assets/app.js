@@ -134,7 +134,60 @@
     return res.json();
   }
 
-  const transport = { jsonp, fetchJson, sleep: (ms) => new Promise((r) => setTimeout(r, ms)) };
+  /**
+   * ArcGIS over a form POST: a "simple" CORS request (no preflight), and the
+   * token travels in the request body rather than the URL, so it stays out of
+   * logs that record addresses of requests.
+   */
+  async function postForm(url, params) {
+    const res = await fetch(url, {
+      method: "POST",
+      body: new URLSearchParams(params),
+      credentials: "omit",
+      referrerPolicy: "origin",
+    });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    return res.json();
+  }
+
+  const transport = { jsonp, fetchJson, postForm, sleep: (ms) => new Promise((r) => setTimeout(r, ms)) };
+
+  // ------------------------------------------------------------ ArcGIS mode
+
+  // Shown only when the page is opened from the link JHFRC sends with a token
+  // (https://amohith7.github.io/jhfrc-address2tract/#arcgis). The hash never
+  // reaches the server. The token itself lives only in this page's memory:
+  // never saved in the browser, put in a URL or written to a results file.
+  const ARCGIS_MODE = /(^|[#&])arcgis\b/i.test(location.hash);
+
+  function arcgisToken() {
+    return ARCGIS_MODE ? $("arcgis-token").value.trim() : "";
+  }
+
+  /** Label the external step after whichever provider will run. */
+  function setExternalProvider(useArcgis) {
+    const name = useArcgis ? "ArcGIS" : "OpenStreetMap";
+    STATUS_LABELS.Matched_External = name;
+    COUNTERS[2][1] = name;
+    $("stage-external-name").textContent = name;
+    $("stage-external-note").textContent = useArcgis
+      ? "Remaining addresses, with your ArcGIS token"
+      : "Remaining addresses, about 1 per second";
+  }
+
+  function initArcgis() {
+    if (!ARCGIS_MODE) return;
+    $("arcgis-box").hidden = false;
+    $("privacy-arcgis").hidden = false;
+    const input = $("arcgis-token");
+    $("arcgis-show").addEventListener("change", (e) => (input.type = e.target.checked ? "text" : "password"));
+    $("arcgis-clear").addEventListener("click", () => {
+      input.value = "";
+      input.type = "password";
+      $("arcgis-show").checked = false;
+      toast("Token cleared from this page.", "info");
+    });
+  }
 
   // ------------------------------------------------------------- file reading
 
@@ -465,6 +518,9 @@
     state.view = { filter: "all", q: "", sortKey: "", sortDir: 1, page: 0 };
     $("search").value = "";
     state.controller = new AbortController();
+    const token = arcgisToken();
+    setExternalProvider(Boolean(token));
+    $("provider-error").hidden = true;
 
     ["census", "retry", "external"].forEach((s) => setStage(s, null));
     setStage("census", "active");
@@ -510,6 +566,8 @@
       await A2TGeocoder.run(state.records, {
         transport,
         signal: state.controller.signal,
+        options: { arcgisToken: token },
+        onProviderError: showProviderError,
         onRecord: (rec) => {
           processed.add(rec);
           feed.unshift({ id: rec.id, match_status: rec.match_status, census_tract_geoid: rec.census_tract_geoid });
@@ -551,6 +609,15 @@
       clearInterval(timer);
       window.removeEventListener("beforeunload", warnOnLeave);
     }
+  }
+
+  /** The ArcGIS step stopped because the token was refused. */
+  function showProviderError(message) {
+    $("provider-error-text").textContent =
+      message + ". The rows it could not look up are marked unmatched. " +
+      "Check the token with JHFRC, then use Start over, or fix and retry rows below.";
+    $("provider-error").hidden = false;
+    toast(message + ".", "error", 8000);
   }
 
   // ---------------------------------------------------------- step 4: results
@@ -752,6 +819,8 @@
     try {
       await A2TGeocoder.run(subset, {
         transport,
+        options: { arcgisToken: arcgisToken() },
+        onProviderError: showProviderError,
         onProgress: ({ done, total }) => ($("retry-label").textContent = "Retrying " + done + " of " + total),
       });
     } catch (err) {
@@ -822,6 +891,7 @@
   document.querySelectorAll('input[name="mode"]').forEach((r) => r.addEventListener("change", syncMode));
   Object.values(PICKERS).forEach((id) => $(id).addEventListener("change", renderMapping));
   $("start").addEventListener("click", start);
+  initArcgis();
   $("cancel").addEventListener("click", () => state.controller && state.controller.abort());
   $("dl-share").addEventListener("click", () => download(A2TGeocoder.shareRows(state.records, state.cols), "results_to_share.xlsx"));
   $("dl-full").addEventListener("click", () => download(A2TGeocoder.resultRows(state.records, state.cols), "results.xlsx"));

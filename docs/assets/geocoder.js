@@ -6,13 +6,18 @@
  *   1. Census geocoder, current address file, then the 2020 address file.
  *   2. One retry with a conservatively normalized street.
  *   3. Extra passes over records whose lookups failed on a network error.
- *   4. Nominatim (OpenStreetMap) for the residual, at most 1 request/second.
+ *   4. The residual goes to Nominatim (OpenStreetMap), at most 1 request per
+ *      second, or, when an ArcGIS token is supplied, to the ArcGIS World
+ *      Geocoder instead (the CLI's --external-provider arcgis).
  * The tract always comes from the Census Bureau's current tract geography.
  *
  * Network access goes through an injected `transport`, so tests can run the
  * pipeline offline:
- *   transport.jsonp(url, params) -> Promise<object>   (Census, JSONP)
- *   transport.fetchJson(url, params) -> Promise<any>  (Nominatim, CORS)
+ *   transport.jsonp(url, params) -> Promise<object>     (Census, JSONP)
+ *   transport.fetchJson(url, params) -> Promise<any>    (Nominatim, CORS)
+ *   transport.postForm(url, params) -> Promise<any>     (ArcGIS, CORS POST,
+ *                                                         so the token travels
+ *                                                         in the body, not the URL)
  *   transport.sleep(ms) -> Promise<void>
  */
 (function (root, factory) {
@@ -28,6 +33,8 @@
   const ONELINE_URL = CENSUS + "onelineaddress";
   const COORDS_URL = CENSUS + "coordinates";
   const NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";
+  const ARCGIS_URL =
+    "https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/findAddressCandidates";
 
   // (benchmark, vintage) pairs swept in order (geocode.FALLBACK_BENCHMARKS).
   const BENCHMARKS = [
@@ -41,6 +48,8 @@
     retryPasses: 2, // config.yaml geocoder.retry_passes
     externalDelayMs: 1100, // Nominatim policy: <= 1 request/second
     externalMaxResidual: 2000, // config.yaml external_max_residual
+    arcgisToken: "", // set => ArcGIS replaces Nominatim for the residual
+    arcgisConcurrency: 4, // ArcGIS has no 1 request/second rule
   };
 
   const STATUS_NO_MATCH = "No_Match";
@@ -49,6 +58,13 @@
     "Coordinates found but did not fall within a Census tract boundary";
 
   class Cancelled extends Error {}
+
+  /**
+   * The external provider refused the request itself (bad or expired token,
+   * quota used up). Stops that stage instead of marking every remaining row
+   * as a false No_Match.
+   */
+  class ProviderError extends Error {}
 
   function checkCancel(signal) {
     if (signal && signal.aborted) throw new Cancelled("Cancelled");
@@ -218,6 +234,57 @@
     rec.error_reason = tract ? "" : REASON_NO_TRACT;
   }
 
+  /** Plain-language text for an ArcGIS {error: {...}} payload. */
+  function arcgisErrorText(error) {
+    const code = Number(error && error.code);
+    const msg = String((error && (error.message || error.details)) || "").trim();
+    if (code === 498 || code === 499 || /token/i.test(msg)) {
+      return "ArcGIS did not accept the token (it may be mistyped or expired)";
+    }
+    if (code === 403) return "ArcGIS refused the request (the token may lack geocoding rights or credits)";
+    return "ArcGIS returned an error" + (msg ? ": " + msg : "");
+  }
+
+  async function geocodeArcgis(rec, ctx) {
+    const params = {
+      SingleLine: rec.address,
+      f: "json",
+      maxLocations: 5,
+      outFields: "Addr_type,Score",
+      countryCode: "USA",
+      token: ctx.opts.arcgisToken,
+    };
+    let payload;
+    try {
+      payload = await withRetry(
+        () => ctx.transport.postForm(ARCGIS_URL, params),
+        ctx.transport,
+        2,
+        ctx.signal
+      );
+    } catch (err) {
+      if (err instanceof Cancelled) throw err;
+      rec.arcgisTried = true;
+      return; // network trouble for this row only; it stays No_Match
+    }
+    // ArcGIS answers token and quota problems with HTTP 200 and an error body.
+    if (payload && payload.error) throw new ProviderError(arcgisErrorText(payload.error));
+    rec.arcgisTried = true;
+    const point = A2T.pickArcgis(payload && payload.candidates);
+    if (!point) return;
+    let tract;
+    try {
+      tract = await coordsToTract(point.lat, point.lon, ctx);
+    } catch (err) {
+      if (err instanceof Cancelled) throw err;
+      return;
+    }
+    rec.cleaned_address = "";
+    rec.census_tract_geoid = tract;
+    rec.match_status = "Matched_External";
+    rec.error_reason = tract ? "" : REASON_NO_TRACT;
+  }
+
   /**
    * Build one record per input row: rejected rows are final, the rest are
    * pending geocoding. `cols` holds the chosen column names: id plus either
@@ -246,8 +313,10 @@
   /**
    * Geocode every pending record in place. onProgress({stage, done, total}) is
    * called as work completes; stage is "census", "retry" or "external".
+   * onProviderError(message) fires if the external provider refuses the
+   * token; that stage then stops and the remaining rows stay No_Match.
    */
-  async function run(records, { transport, onProgress, onRecord, signal, options } = {}) {
+  async function run(records, { transport, onProgress, onRecord, onProviderError, signal, options } = {}) {
     const ctx = { transport, signal, opts: { ...DEFAULTS, ...(options || {}) } };
     const report = onProgress || (() => {});
     // onRecord(rec) fires each time a record's lookup finishes (live feed).
@@ -291,15 +360,48 @@
       .filter((r) => r.match_status === STATUS_NO_MATCH)
       .filter((r) => A2T.isGeocodable(r.address) && !A2T.isPoBox(r.address))
       .slice(0, ctx.opts.externalMaxResidual);
-    for (let i = 0; i < residual.length; i++) {
-      checkCancel(signal);
-      if (i > 0) await transport.sleep(ctx.opts.externalDelayMs);
-      await geocodeExternal(residual[i], ctx);
-      emit(residual[i]);
-      report({ stage: "external", done: i + 1, total: residual.length });
+    if (ctx.opts.arcgisToken) {
+      // ArcGIS: parallel workers; the first refusal stops every worker.
+      let n = 0;
+      let refused = null;
+      await pool(
+        residual,
+        ctx.opts.arcgisConcurrency,
+        async (rec) => {
+          if (refused) return;
+          try {
+            await geocodeArcgis(rec, ctx);
+          } catch (err) {
+            if (!(err instanceof ProviderError)) throw err;
+            if (!refused) refused = err.message;
+            return;
+          }
+          emit(rec);
+          report({ stage: "external", done: ++n, total: residual.length });
+        },
+        signal
+      );
+      if (refused) {
+        const reason = "Address could not be geocoded by the Census; " + refused;
+        for (const r of residual) {
+          if (r.match_status === STATUS_NO_MATCH && !r.arcgisTried) r.error_reason = reason;
+        }
+        (onProviderError || (() => {}))(refused);
+      }
+    } else {
+      for (let i = 0; i < residual.length; i++) {
+        checkCancel(signal);
+        if (i > 0) await transport.sleep(ctx.opts.externalDelayMs);
+        await geocodeExternal(residual[i], ctx);
+        emit(residual[i]);
+        report({ stage: "external", done: i + 1, total: residual.length });
+      }
     }
 
-    for (const r of records) delete r.transientError;
+    for (const r of records) {
+      delete r.transientError;
+      delete r.arcgisTried;
+    }
     return records;
   }
 
@@ -331,5 +433,5 @@
     }));
   }
 
-  return { buildRecords, run, resultRows, shareRows, Cancelled, DEFAULTS };
+  return { buildRecords, run, resultRows, shareRows, Cancelled, ProviderError, DEFAULTS };
 });

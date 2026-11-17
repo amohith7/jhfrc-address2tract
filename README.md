@@ -8,6 +8,8 @@ Converts a file of addresses into U.S. Census tract IDs (GEOIDs), so JHFRC can l
 
 Open the page, choose your file, match your columns, and download the results. Nothing to install. Your file is processed inside your browser and is never uploaded to or stored on the site; only each address is sent to the U.S. Census Bureau geocoder (and, for addresses the Census cannot find, to the OpenStreetMap Nominatim geocoder). The website follows the same rules as this tool: the same privacy screen on column names, unique-ID check, address cleanup and output files (`results.xlsx` to keep, `results_to_share.xlsx` to send to JHFRC).
 
+If JHFRC sends you a temporary ArcGIS token, it will also send a special link to the website (the normal address with `#arcgis` at the end). That link shows an extra box where you paste the token; addresses the Census cannot find are then looked up with the ArcGIS World Geocoder instead of OpenStreetMap. The token stays in that browser tab only: it is never saved, never added to the page address and never written to your results files, and it is sent only to ArcGIS.
+
 On the results page you can filter, search and sort every record, correct unmatched addresses in place and retry just those rows (corrections appear in a `corrected_address` column of `results.xlsx`), or click **Try it with sample data** to see it work on public landmark addresses first.
 
 The website handles up to 5,000 rows per run, looking up several addresses at a time, so a large file can take several minutes; the page shows live progress. A larger file can be split into 5,000-row parts on the page, or run with the command-line tool below, which is much faster for big files. Website code lives in [`docs/`](docs/).
