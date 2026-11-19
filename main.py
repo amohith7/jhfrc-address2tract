@@ -290,22 +290,34 @@ def _print_summary(
     unmatched_pct = (100.0 * unmatched / total) if total else 0.0
 
     print()
-    print("=" * 56)
-    print("  PROCESSING SUMMARY")
-    print("=" * 56)
-    print(f"  Total rows processed          : {total:,}")
-    print(f"  Matched — GeoPackage (primary): {matched_gpkg:,}")
-    print(f"  Matched — Census API (backup) : {matched_api_backup:,}")
-    print(f"  Matched — Census fallback     : {matched_fallback:,}")
-    print(f"  Matched — External geocoder   : {matched_external:,}")
+    # Labels name the service that found the coordinates. The tract itself
+    # comes from the local Census tract map, except "API tract" rows, where
+    # the point fell outside every map tract and the Census API supplied it.
+    width = 60
+    rows = [
+        ("Total rows processed", f"{total:,}"),
+        ("Matched - Census batch lookup", f"{matched_gpkg:,}"),
+        ("Matched - Census batch, API tract", f"{matched_api_backup:,}"),
+        ("Matched - Census one-by-one", f"{matched_fallback:,}"),
+        ("Matched - External geocoder", f"{matched_external:,}"),
+    ]
     if matched_zip_approx:
-        print(f"  Matched — ZIP approx (coarse) : {matched_zip_approx:,}")
-    print(f"  Unmatched                     : {unmatched:,}")
-    print(f"  Rejected (missing data)       : {rejected:,}")
-    print("-" * 56)
-    print(f"  Matched total                 : {total_matched:,}  ({match_pct:.1f}%)")
-    print(f"  Unmatched                     : {unmatched:,}  ({unmatched_pct:.1f}%)")
-    print("=" * 56)
+        rows.append(("Matched - ZIP approx (coarse)", f"{matched_zip_approx:,}"))
+    rows += [
+        ("Unmatched", f"{unmatched:,}"),
+        ("Rejected (missing data)", f"{rejected:,}"),
+    ]
+    print("=" * width)
+    print("  PROCESSING SUMMARY")
+    print("=" * width)
+    for label, value in rows:
+        print(f"  {label:<34}: {value}")
+    print("-" * width)
+    print(f"  {'Matched total':<34}: {total_matched:,}  ({match_pct:.1f}%)")
+    print(f"  {'Unmatched':<34}: {unmatched:,}  ({unmatched_pct:.1f}%)")
+    print("  Tracts come from the downloaded Census tract map, except")
+    print("  'Census batch, API tract' rows (tract from the Census API).")
+    print("=" * width)
     if unmatched_pct > 10.0:
         print()
         print(
