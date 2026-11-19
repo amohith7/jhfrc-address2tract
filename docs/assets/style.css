@@ -297,6 +297,9 @@ summary::-webkit-details-marker { display: none; }
 summary::after { content: "+"; position: absolute; right: 18px; top: 50%; transform: translateY(-50%); font: 400 1.4rem/1 var(--heading); color: var(--muted); transition: transform .2s; }
 details[open] summary::after { transform: translateY(-50%) rotate(45deg); }
 details > p, details > dl { margin: 0; padding: 0 16px 14px; }
+details > ol, details > ul { margin: 0; padding: 0 16px 14px 40px; }
+details > ol li, details > ul li { margin-bottom: 6px; }
+#faq details code { overflow-wrap: anywhere; }
 dt { font-weight: 700; margin-top: 8px; }
 dd { margin: 0 0 4px; color: var(--muted); }
 
