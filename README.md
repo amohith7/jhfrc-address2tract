@@ -111,7 +111,15 @@ For the best match rate, include the full city, state, and ZIP in every address.
 
 ## Sharing results with JHFRC
 
-The tool writes a second file next to your output whose name ends in **`_to_share`** (for example `results_to_share.xlsx`). **Send only that file.** It contains only your ID code, the Census tract, and the match status. It has **no street address, no names, and no PHI**. Keep the full output (which includes the address, for your own checking) on your own computer.
+The tool writes a second file next to your output whose name ends in **`_to_share`** (for example `results_to_share.xlsx`). It contains only your ID code, the Census tract, and the match status, with **no street address, no names, and no PHI**. Send it so JHFRC can check the address-to-tract conversion rate. Keep the full output (which includes the address, for your own checking) on your own computer.
+
+**The share file is not your main data file.** To prepare the data you send to JHFRC:
+
+1. Add the Census tract to your main file by matching on your ID (XLOOKUP in Excel, or `pandas.merge` in Python).
+2. Remove all PHI: names, street addresses, dates of birth, phone numbers, emails and any other identifiers.
+3. Send that de-identified file to JHFRC as agreed.
+
+**Getting an ArcGIS API key.** Email JHFRC for a temporary key, shared through UT Vault. Or create your own: sign up for a free ArcGIS Location Platform account at https://location.arcgis.com/, create an API key under Developer credentials with the *Geocoding (not stored)* privilege, and pass it with `--external-provider arcgis --arcgis-token <key>` (or paste it under **Advanced: ArcGIS lookup** on the website).
 
 Use a non-identifying ID (an internal code), not a name or an SSN. The ID and Census tract are written as text, so Excel lookup functions like XLOOKUP match them reliably.
 

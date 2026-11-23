@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600&family=Raleway:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="assets/style.css?v=d37bed04">
+  <link rel="stylesheet" href="assets/style.css?v=db149663">
 </head>
 <body>
   <a class="skip" href="#app">Skip to the tool</a>
@@ -234,7 +234,7 @@
       <div class="downloads">
         <button class="dl primary" type="button" id="dl-share">
           <span class="dl-icon"><svg class="ic"><use href="#i-download"/></svg></span>
-          <span class="dl-text"><strong>results_to_share.xlsx</strong><span>Send this to JHFRC. ID, tract and status only, no addresses.</span></span>
+          <span class="dl-text"><strong>results_to_share.xlsx</strong><span>Send this to JHFRC so we can check the match rate. ID, tract and status only, no addresses.</span></span>
         </button>
         <button class="dl" type="button" id="dl-full">
           <span class="dl-icon"><svg class="ic"><use href="#i-download"/></svg></span>
@@ -323,6 +323,25 @@
       <details>
         <summary>I fixed an address. Which file shows the change?</summary>
         <p><code>results.xlsx</code> gains a <code>corrected_address</code> column next to your original address, so you can update your own records. The share file is unchanged in format.</p>
+      </details>
+      <details>
+        <summary>Is the share file the data I send to JHFRC?</summary>
+        <p>No. <code>results_to_share.xlsx</code> only lets JHFRC check how many addresses were converted to tracts. To prepare your main data file:</p>
+        <ol>
+          <li>Add the <code>census_tract_geoid</code> column to your main file by matching on your ID, with XLOOKUP in Excel or a merge in Python.</li>
+          <li>Remove all PHI: names, street addresses, dates of birth, phone numbers, emails and any other identifiers.</li>
+          <li>Send that de-identified file to JHFRC as agreed.</li>
+        </ol>
+        <p>Excel example, with your IDs in column A and <code>results_to_share.xlsx</code> open: <code>=XLOOKUP(A2, [results_to_share.xlsx]Sheet1!$A:$A, [results_to_share.xlsx]Sheet1!$B:$B, "")</code>. Adjust the sheet and column letters to match the file. IDs and tracts are stored as text, so format your ID column as text too.</p>
+      </details>
+      <details>
+        <summary>How do I get an ArcGIS API key?</summary>
+        <p>You only need one if JHFRC suggests an ArcGIS lookup for addresses the Census could not find. Two ways:</p>
+        <ul>
+          <li><strong>From JHFRC (easiest).</strong> Email <a href="mailto:mohith-addepalli@utc.edu">mohith-addepalli@utc.edu</a>. We share a temporary key securely through UT Vault, never by plain email.</li>
+          <li><strong>Your own key.</strong> Sign up for a free ArcGIS Location Platform account at <a href="https://location.arcgis.com/" target="_blank" rel="noopener">location.arcgis.com</a>. Under Developer credentials, create an API key, give it the <em>Geocoding (not stored)</em> privilege, and copy it. Check Esri's current free monthly allowance before running large files.</li>
+        </ul>
+        <p>Then open <strong>Advanced: ArcGIS lookup</strong> on the Columns step, paste the key and click <strong>Check token</strong>. Keep the key private and do not post it in shared documents.</p>
       </details>
     </div>
   </section>
