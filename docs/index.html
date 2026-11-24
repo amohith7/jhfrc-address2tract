@@ -11,7 +11,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600&family=Raleway:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="assets/vendor/leaflet.css?v=337bfca5">
-  <link rel="stylesheet" href="assets/style.css?v=cbec5a97">
+  <link rel="stylesheet" href="assets/style.css?v=79b04e7d">
 </head>
 <body>
   <a class="skip" href="#app">Skip to the tool</a>
@@ -25,6 +25,8 @@
     <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 9v4m0 4h.01M10.3 3.9 2.6 17.3A2 2 0 0 0 4.3 20h15.4a2 2 0 0 0 1.7-2.7L13.7 3.9a2 2 0 0 0-3.4 0z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
     <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v12m0 0-4-4m4 4 4-4M4 20h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-fit" viewBox="0 0 24 24"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-map" viewBox="0 0 24 24"><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2zm0 0v14m6-12v14" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
     <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="m16 16 4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
     <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 0-14.6-4.5L4 8m0-4v4h4M4 13a8 8 0 0 0 14.6 4.5L20 16m0 4v-4h-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-left" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
@@ -52,6 +54,7 @@
 
   <section class="hero" id="top">
     <div class="wrap hero-inner">
+      <div class="hero-copy">
       <p class="eyebrow">Free tool for JHFRC partners</p>
       <h1>Turn addresses into Census tracts, right in your browser.</h1>
       <p class="lede">Upload a spreadsheet, match your columns, and download the tract for every address. No software to install, and your file never leaves your computer.</p>
@@ -64,6 +67,13 @@
         <a class="btn primary lg" href="#app"><svg class="ic"><use href="#i-upload"/></svg> Start with your file</a>
         <button class="btn ghost lg" type="button" data-action="sample"><svg class="ic"><use href="#i-play"/></svg> Try it with sample data</button>
       </div>
+      </div>
+      <figure class="hero-demo" aria-label="Example: addresses in Hamilton County, Tennessee being placed in their census tracts">
+        <div class="demo-input" aria-hidden="true"><svg class="ic"><use href="#i-search"/></svg><span id="demo-addr"></span><span class="caret"></span></div>
+        <svg class="demo-map" id="demo-map" aria-hidden="true"></svg>
+        <div class="demo-result" id="demo-result" aria-hidden="true"><span>Census tract</span><strong id="demo-tract"></strong><em id="demo-name"></em></div>
+        <figcaption>Example: public places in Hamilton County, Tennessee</figcaption>
+      </figure>
     </div>
   </section>
 
@@ -221,9 +231,21 @@
 
     <!-- Step 4: results -->
     <section class="panel" data-panel="4" aria-labelledby="h4" hidden>
-      <header class="panel-head">
-        <h2 id="h4" tabindex="-1">Results</h2>
-        <p id="results-sub"></p>
+      <header class="panel-head results-head">
+        <div>
+          <h2 id="h4" tabindex="-1">Results</h2>
+          <p id="results-sub"></p>
+        </div>
+        <div class="downloads">
+          <button class="dl primary" type="button" id="dl-share">
+            <span class="dl-icon"><svg class="ic"><use href="#i-download"/></svg></span>
+            <span class="dl-text"><strong>results_to_share.xlsx</strong><span>Send to JHFRC to check the match rate. ID, tract and status only.</span></span>
+          </button>
+          <button class="dl" type="button" id="dl-full">
+            <span class="dl-icon"><svg class="ic"><use href="#i-download"/></svg></span>
+            <span class="dl-text"><strong>results.xlsx</strong><span>Keep on your computer. Includes addresses.</span></span>
+          </button>
+        </div>
       </header>
 
       <div class="kpis" id="kpis"></div>
@@ -233,31 +255,27 @@
       </div>
 
       <div class="map-card" id="map-card" hidden>
-        <div class="map-head">
-          <h3>Where your records are</h3>
-          <div class="map-actions">
-            <label class="check"><input type="checkbox" id="map-streets"> Show street map</label>
-            <button class="btn ghost sm" type="button" id="map-refit">Fit to tracts</button>
+        <div class="map-stage">
+          <div class="tract-map" id="tract-map" role="region" aria-label="Map of census tracts shaded by number of records"></div>
+          <div class="map-float map-tools">
+            <label class="switch"><input type="checkbox" id="map-streets"><span class="track" aria-hidden="true"></span><span>Street map</span></label>
+            <button class="map-btn" type="button" id="map-refit" title="Zoom to all your tracts"><svg class="ic"><use href="#i-fit"/></svg> Fit</button>
+          </div>
+          <div class="map-float map-key">
+            <span class="map-key-title">Records per tract</span>
+            <ul class="map-legend" id="map-legend" aria-label="Records per tract"></ul>
           </div>
         </div>
-        <div class="tract-map" id="tract-map" role="region" aria-label="Map of census tracts shaded by number of records"></div>
-        <div class="map-foot">
-          <div class="map-key"><span class="map-key-title">Records per tract</span><ul class="legend map-legend" id="map-legend" aria-label="Records per tract"></ul></div>
-          <p class="muted small" id="map-status" aria-live="polite"></p>
-        </div>
-        <p class="muted small">Drawn in your browser from Census tract boundaries hosted on this site. Your addresses and tract IDs are never sent to a map service. Hover over a tract for its count.</p>
-        <p class="muted small" id="map-base-note" hidden></p>
-      </div>
-
-      <div class="downloads">
-        <button class="dl primary" type="button" id="dl-share">
-          <span class="dl-icon"><svg class="ic"><use href="#i-download"/></svg></span>
-          <span class="dl-text"><strong>results_to_share.xlsx</strong><span>Send this to JHFRC so we can check the match rate. ID, tract and status only, no addresses.</span></span>
-        </button>
-        <button class="dl" type="button" id="dl-full">
-          <span class="dl-icon"><svg class="ic"><use href="#i-download"/></svg></span>
-          <span class="dl-text"><strong>results.xlsx</strong><span>Keep on your computer. Includes addresses for your review.</span></span>
-        </button>
+        <aside class="map-side">
+          <h3>Where your records are</h3>
+          <p class="map-big"><b id="map-tracts">0</b> <span id="map-tracts-label">tracts</span></p>
+          <p class="map-status" id="map-status" aria-live="polite"></p>
+          <h4>Busiest tracts</h4>
+          <ol class="top-tracts" id="top-tracts"></ol>
+          <p class="map-hint">Click a tract to show its rows in the table below.</p>
+          <p class="map-note">Drawn in your browser from Census tract boundaries hosted on this site. Your addresses and tract IDs are never sent to a map service.</p>
+          <p class="map-note" id="map-base-note" hidden></p>
+        </aside>
       </div>
 
       <div class="notice error" id="provider-error" role="alert" hidden>
@@ -294,7 +312,7 @@
   <section class="section" id="how">
     <div class="wrap">
       <h2 class="section-title">How it works</h2>
-      <div class="cards3">
+      <div class="cards3 flow">
         <article class="info-card"><span class="num">1</span><h3>Upload</h3><p>Choose a spreadsheet with an ID and address columns. It is read inside this tab and checked for personal details before anything else happens.</p></article>
         <article class="info-card"><span class="num">2</span><h3>Match</h3><p>Each address is looked up with the U.S. Census Bureau geocoder, then OpenStreetMap for the few the Census cannot find.</p></article>
         <article class="info-card"><span class="num">3</span><h3>Download</h3><p>Review the results, fix any unmatched addresses, and download a share file with only the ID, tract and match status.</p></article>
@@ -382,9 +400,11 @@
   <script src="assets/geocoder.js?v=85690ccd"></script>
   <script src="assets/vendor/leaflet.js?v=db49d009"></script>
   <script src="assets/vendor/topojson-client.min.js?v=25cd02ae"></script>
-  <script src="assets/sample.js?v=31f82952"></script>
+  <script src="assets/sample.js?v=e79a5b6a"></script>
   <script src="assets/config.js?v=28924da7"></script>
-  <script src="assets/tractmap.js?v=d861ffce"></script>
-  <script src="assets/app.js?v=dfd94f2d"></script>
+  <script src="assets/tractmap.js?v=7834f1ed"></script>
+  <script src="assets/hero_tracts.js?v=2e14898e"></script>
+  <script src="assets/hero_demo.js?v=93550fb3"></script>
+  <script src="assets/app.js?v=395cb481"></script>
 </body>
 </html>
