@@ -400,7 +400,7 @@
     const s = window.A2TSample;
     acceptRows(s.fileName, s.columns.slice(), s.rows.map((r) => ({ ...r })));
     goTo(1);
-    toast("Sample data loaded: 13 public landmark addresses.", "ok");
+    toast("Sample data loaded: " + window.A2TSample.rows.length + " public places around Chattanooga.", "ok");
   }
 
   /** Download the (clean) file as parts of at most MAX_ROWS rows each. */
@@ -666,6 +666,10 @@
     $("fix-hint-title").textContent = fmt(t.unmatched) + (t.unmatched === 1 ? " address was" : " addresses were") + " not matched.";
     renderChips(counts, t.total);
     renderTable();
+    // After the panel is shown, so the map can measure its size.
+    requestAnimationFrame(() => {
+      if (window.A2TMap && window.L) A2TMap.update(state.records);
+    });
   }
 
   function kpi(value, sub, label) {
@@ -913,6 +917,7 @@
   $("cancel").addEventListener("click", () => state.controller && state.controller.abort());
   $("dl-share").addEventListener("click", () => download(A2TGeocoder.shareRows(state.records, state.cols), "results_to_share.xlsx"));
   $("dl-full").addEventListener("click", () => download(A2TGeocoder.resultRows(state.records, state.cols), "results.xlsx"));
+  $("map-refit").addEventListener("click", () => window.A2TMap && A2TMap.refit());
   $("show-unmatched").addEventListener("click", () => {
     state.view.filter = "No_Match";
     state.view.page = 0;

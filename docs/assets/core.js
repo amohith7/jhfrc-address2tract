@@ -277,9 +277,52 @@
     return t;
   }
 
+  /** Matched records per tract: Map of 11-digit GEOID -> count. */
+  function tractCounts(records) {
+    const counts = new Map();
+    for (const r of records) {
+      const g = cleanGeoid(r.census_tract_geoid);
+      if (g) counts.set(g, (counts.get(g) || 0) + 1);
+    }
+    return counts;
+  }
+
+  /**
+   * Upper bounds of up to k color classes for the tract counts, e.g.
+   * [1, 3, 7, 15, 40]. Few distinct values get one class each; otherwise the
+   * bounds are quantiles, so each shade covers a similar number of tracts.
+   */
+  function countBreaks(values, k = 5) {
+    const sorted = [...values].filter((v) => v > 0).sort((a, b) => a - b);
+    if (!sorted.length) return [];
+    const unique = [...new Set(sorted)];
+    if (unique.length <= k) return unique;
+    const breaks = [];
+    for (let i = 1; i <= k; i++) {
+      const v = sorted[Math.min(sorted.length - 1, Math.ceil((i / k) * sorted.length) - 1)];
+      if (!breaks.length || v > breaks[breaks.length - 1]) breaks.push(v);
+    }
+    return breaks;
+  }
+
+  /** Index of the class a count falls in (see countBreaks). */
+  function breakIndex(value, breaks) {
+    const i = breaks.findIndex((b) => value <= b);
+    return i === -1 ? breaks.length - 1 : i;
+  }
+
+  /** Legend labels for countBreaks: ["1", "2-3", "4-7", ...]. */
+  function breakLabels(breaks) {
+    return breaks.map((b, i) => {
+      const lo = i === 0 ? 1 : breaks[i - 1] + 1;
+      return lo === b ? String(b) : lo + "-" + b;
+    });
+  }
+
   return {
     cleanCell, isBlank, normalizeZip, combineAddress, normalizeStreet,
     normalizeAddressStreet, checkForPhi, scanCellsForPhi, findDuplicateIds, isGeocodable, isPoBox,
     nominatimPrecise, pickNominatim, pickArcgis, cleanGeoid, guessColumns, tally,
+    tractCounts, countBreaks, breakIndex, breakLabels,
   };
 });

@@ -10,7 +10,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600&family=Raleway:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="assets/style.css?v=db149663">
+  <link rel="stylesheet" href="assets/vendor/leaflet.css?v=337bfca5">
+  <link rel="stylesheet" href="assets/style.css?v=727d794f">
 </head>
 <body>
   <a class="skip" href="#app">Skip to the tool</a>
@@ -231,6 +232,19 @@
         <ul class="legend" id="legend"></ul>
       </div>
 
+      <div class="map-card" id="map-card" hidden>
+        <div class="map-head">
+          <h3>Where your records are</h3>
+          <button class="btn ghost sm" type="button" id="map-refit">Fit to tracts</button>
+        </div>
+        <div class="tract-map" id="tract-map" role="region" aria-label="Map of census tracts shaded by number of records"></div>
+        <div class="map-foot">
+          <div class="map-key"><span class="map-key-title">Records per tract</span><ul class="legend map-legend" id="map-legend" aria-label="Records per tract"></ul></div>
+          <p class="muted small" id="map-status" aria-live="polite"></p>
+        </div>
+        <p class="muted small">Drawn in your browser from Census tract boundaries hosted on this site. No address, tract or map view is sent to any map service. Hover over a tract for its count.</p>
+      </div>
+
       <div class="downloads">
         <button class="dl primary" type="button" id="dl-share">
           <span class="dl-icon"><svg class="ic"><use href="#i-download"/></svg></span>
@@ -295,6 +309,7 @@
         <li><svg class="ic"><use href="#i-check"/></svg> Files with sensitive column names (name, DOB, phone, email and others) are refused at upload.</li>
         <li><svg class="ic"><use href="#i-check"/></svg> Cells that look like emails, phone numbers, SSNs, dates or names before an address are refused too.</li>
         <li><svg class="ic"><use href="#i-check"/></svg> The file you send to JHFRC holds only the ID, tract and match status.</li>
+        <li><svg class="ic"><use href="#i-check"/></svg> The results map is drawn in your browser from boundaries hosted on this site. Nothing is sent to a map service.</li>
       </ul>
     </div>
   </section>
@@ -359,9 +374,12 @@
   <div class="toasts" id="toasts" aria-live="polite" aria-atomic="false"></div>
 
   <script src="assets/vendor/xlsx.full.min.js?v=cc015130"></script>
-  <script src="assets/core.js?v=23c71086"></script>
+  <script src="assets/core.js?v=ac8d1d6b"></script>
   <script src="assets/geocoder.js?v=85690ccd"></script>
-  <script src="assets/sample.js?v=f882679f"></script>
-  <script src="assets/app.js?v=dbe511f4"></script>
+  <script src="assets/vendor/leaflet.js?v=db49d009"></script>
+  <script src="assets/vendor/topojson-client.min.js?v=25cd02ae"></script>
+  <script src="assets/sample.js?v=31f82952"></script>
+  <script src="assets/tractmap.js?v=191a6cda"></script>
+  <script src="assets/app.js?v=df03ca2d"></script>
 </body>
 </html>
