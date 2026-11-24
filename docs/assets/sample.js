@@ -1,11 +1,12 @@
 /*
- * Built-in sample file for "Try it with sample data". Public places in the
- * Greater Chattanooga region only (city halls, hospitals, schools, landmarks;
- * no client data), so the results map shows one compact area. The first 30
- * were matched by the Census geocoder when this list was built, several of
- * them downtown so the map shows a range of counts. S31 is a PO box (never
- * matched) and S32 is a made-up address, so the fix-and-retry step has
- * something to show: correct it to "615 McCallie Ave" and retry.
+ * Built-in sample file for "Try it with sample data". 96 public places in the
+ * Greater Chattanooga region (schools, libraries, hospitals, city halls,
+ * parks and landmarks; no client data), all matched exactly by the Census
+ * geocoder when this list was built: 52 tracts in 5 counties, with
+ * several tracts holding many places so the results map shows a real range.
+ * S97 is a PO box (never matched) and S98 is a made-up address, so the
+ * fix-and-retry step has something to show: correct it to "615 McCallie Ave"
+ * and retry.
  */
 (function (root) {
   "use strict";
@@ -34,15 +35,81 @@
     ["S21", "1517 Tombras Ave", "East Ridge", "TN", "37412"],
     ["S22", "3117 Dayton Blvd", "Red Bank", "TN", "37415"],
     ["S23", "1111 Ridgeway Ave", "Signal Mountain", "TN", "37377"],
-    ["S24", "4910 Swinyar Dr", "Collegedale", "TN", "37315"],
-    ["S25", "9835 Dayton Pike", "Soddy Daisy", "TN", "37379"],
-    ["S26", "155 N Ocoee St", "Cleveland", "TN", "37311"],
-    ["S27", "1400 Patten Rd", "Lookout Mountain", "GA", "30750"],
-    ["S28", "400 McFarland Ave", "Rossville", "GA", "30741"],
-    ["S29", "500 City Hall Dr", "Fort Oglethorpe", "GA", "30742"],
-    ["S30", "103 S Duke St", "LaFayette", "GA", "30728"],
-    ["S31", "PO Box 100", "Chattanooga", "TN", "37401"],
-    ["S32", "99 Nowhere Lane", "Chattanooga", "TN", "37403"],
+    ["S24", "9835 Dayton Pike", "Soddy Daisy", "TN", "37379"],
+    ["S25", "155 N Ocoee St", "Cleveland", "TN", "37311"],
+    ["S26", "1400 Patten Rd", "Lookout Mountain", "GA", "30750"],
+    ["S27", "400 McFarland Ave", "Rossville", "GA", "30741"],
+    ["S28", "865 E 3rd St", "Chattanooga", "TN", "37403"],
+    ["S29", "1020 N Moore Rd", "Chattanooga", "TN", "37411"],
+    ["S30", "2500 S Market St", "Chattanooga", "TN", "37408"],
+    ["S31", "4320 Bennett Rd", "Chattanooga", "TN", "37412"],
+    ["S32", "640 Morrison Springs Rd", "Chattanooga", "TN", "37415"],
+    ["S33", "2650 Sam Powell Trl", "Signal Mountain", "TN", "37377"],
+    ["S34", "6123 Mountain View Rd", "Ooltewah", "TN", "37363"],
+    ["S35", "2015 Ooltewah Ringgold Rd", "Ooltewah", "TN", "37363"],
+    ["S36", "6836 Tyner Rd", "Chattanooga", "TN", "37421"],
+    ["S37", "350 Lookout High St", "Chattanooga", "TN", "37419"],
+    ["S38", "6579 E Brainerd Rd", "Chattanooga", "TN", "37421"],
+    ["S39", "1009 Mississippi Ave", "Chattanooga", "TN", "37405"],
+    ["S40", "927 W 37th St", "Chattanooga", "TN", "37410"],
+    ["S41", "718 E 8th St", "Chattanooga", "TN", "37403"],
+    ["S42", "500 N Highland Park Ave", "Chattanooga", "TN", "37404"],
+    ["S43", "1802 Bailey Ave", "Chattanooga", "TN", "37404"],
+    ["S44", "4808 Brainerd Rd", "Chattanooga", "TN", "37411"],
+    ["S45", "2100 Glass St", "Chattanooga", "TN", "37406"],
+    ["S46", "800 Woodmore Ln", "Chattanooga", "TN", "37411"],
+    ["S47", "321 N Bragg Ave", "Lookout Mountain", "TN", "37350"],
+    ["S48", "1301 James Blvd", "Signal Mountain", "TN", "37377"],
+    ["S49", "4435 Shackleford Ridge Rd", "Signal Mountain", "TN", "37377"],
+    ["S50", "5080 Ooltewah Ringgold Rd", "Ooltewah", "TN", "37363"],
+    ["S51", "10433 E Brainerd Rd", "Apison", "TN", "37302"],
+    ["S52", "9042 Career Ln", "Ooltewah", "TN", "37363"],
+    ["S53", "5210 Cassandra Smith Rd", "Hixson", "TN", "37343"],
+    ["S54", "1609 Thrasher Pike", "Hixson", "TN", "37343"],
+    ["S55", "9811 Dallas Hollow Rd", "Soddy Daisy", "TN", "37379"],
+    ["S56", "4881 Taylor Cir", "Collegedale", "TN", "37315"],
+    ["S57", "1120 N Ocoee St", "Cleveland", "TN", "37311"],
+    ["S58", "14049 Scenic Hwy", "Lookout Mountain", "GA", "30750"],
+    ["S59", "1755 Gunbarrel Rd", "Chattanooga", "TN", "37421"],
+    ["S60", "632 Morrison Springs Rd", "Chattanooga", "TN", "37415"],
+    ["S61", "2305 Chambliss Ave NW", "Cleveland", "TN", "37311"],
+    ["S62", "3410 Amnicola Hwy", "Chattanooga", "TN", "37406"],
+    ["S63", "1836 Taft Hwy", "Signal Mountain", "TN", "37377"],
+    ["S64", "150 Tennessee St", "Ringgold", "GA", "30736"],
+    ["S65", "71 Case Ave", "Trenton", "GA", "30752"],
+    ["S66", "190 Church St NE", "Cleveland", "TN", "37311"],
+    ["S67", "321 Chestnut St", "Chattanooga", "TN", "37402"],
+    ["S68", "400 Garden Rd", "Chattanooga", "TN", "37419"],
+    ["S69", "720 E 4th St", "Chattanooga", "TN", "37403"],
+    ["S70", "709 Broad St", "Chattanooga", "TN", "37402"],
+    ["S71", "399 McCallie Ave", "Chattanooga", "TN", "37402"],
+    ["S72", "1254 E 3rd St", "Chattanooga", "TN", "37404"],
+    ["S73", "1730 Lakeview Dr", "Rossville", "GA", "30741"],
+    ["S74", "5801 Champion Rd", "Chattanooga", "TN", "37416"],
+    ["S75", "8411 Harrison Bay Rd", "Harrison", "TN", "37341"],
+    ["S76", "1001 Airport Rd", "Chattanooga", "TN", "37421"],
+    ["S77", "200 E M L King Blvd", "Chattanooga", "TN", "37403"],
+    ["S78", "1801 Reggie White Blvd", "Chattanooga", "TN", "37408"],
+    ["S79", "201 Power Alley", "Chattanooga", "TN", "37402"],
+    ["S80", "900 Georgia Ave", "Chattanooga", "TN", "37402"],
+    ["S81", "5208 Hixson Pike", "Hixson", "TN", "37343"],
+    ["S82", "925 W 39th St", "Chattanooga", "TN", "37410"],
+    ["S83", "4850 Jersey Pike", "Chattanooga", "TN", "37416"],
+    ["S84", "3502 Hixson Pike", "Chattanooga", "TN", "37415"],
+    ["S85", "1500 E Main St", "Chattanooga", "TN", "37404"],
+    ["S86", "6900 Lee Hwy", "Chattanooga", "TN", "37421"],
+    ["S87", "8400 Old Lee Hwy", "Ooltewah", "TN", "37363"],
+    ["S88", "9411 Bill Reed Rd", "Ooltewah", "TN", "37363"],
+    ["S89", "3600 Cummings Hwy", "Chattanooga", "TN", "37419"],
+    ["S90", "4100 Ringgold Rd", "East Ridge", "TN", "37412"],
+    ["S91", "1200 McCallie Ave", "Chattanooga", "TN", "37404"],
+    ["S92", "800 Vine St", "Chattanooga", "TN", "37403"],
+    ["S93", "301 E 11th St", "Chattanooga", "TN", "37403"],
+    ["S94", "7700 Ooltewah Georgetown Rd", "Ooltewah", "TN", "37363"],
+    ["S95", "100 E 10th St", "Chattanooga", "TN", "37402"],
+    ["S96", "4501 Hixson Pike", "Hixson", "TN", "37343"],
+    ["S97", "PO Box 100", "Chattanooga", "TN", "37401"],
+    ["S98", "99 Nowhere Lane", "Chattanooga", "TN", "37403"],
   ];
   root.A2TSample = {
     fileName: "sample_addresses.xlsx",

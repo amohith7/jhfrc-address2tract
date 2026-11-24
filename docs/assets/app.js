@@ -38,7 +38,7 @@
     records: null,
     controller: null,
     edits: new Map(), // record -> edited address text
-    view: { filter: "all", q: "", sortKey: "", sortDir: 1, page: 0 },
+    view: { filter: "all", q: "", sortKey: "", sortDir: 1, page: 0, tract: "", tractName: "" },
   };
 
   // ------------------------------------------------------------ small helpers
@@ -533,7 +533,8 @@
     state.cols = cols;
     state.records = A2TGeocoder.buildRecords(state.rows, cols);
     state.edits.clear();
-    state.view = { filter: "all", q: "", sortKey: "", sortDir: 1, page: 0 };
+    state.view = { filter: "all", q: "", sortKey: "", sortDir: 1, page: 0, tract: "", tractName: "" };
+    if (window.A2TMap) A2TMap.clearSelection();
     $("search").value = "";
     state.controller = new AbortController();
     const token = arcgisToken();
@@ -643,11 +644,33 @@
   function showResults() {
     const t = A2T.tally(state.records);
     $("results-sub").textContent = state.fileName + " · " + fmt(t.total) + " records";
+    const review = t.unmatched + t.rejected;
+    const rate = t.total ? t.matched / t.total : 0;
+    const matchedCard = kpi(t.matched, pct(t.matched, t.total), "Matched to a tract");
+    const meter = el("span", { class: "kpi-meter" }, el("i"));
+    matchedCard.append(meter);
+    requestAnimationFrame(() => (meter.firstChild.style.width = (rate * 100).toFixed(1) + "%"));
+    const reviewCard = kpi(review, review ? null : "all clear", "Need review (unmatched or rejected)");
+    reviewCard.classList.add("kpi-review");
+    if (review) {
+      reviewCard.classList.add("has-review");
+      reviewCard.setAttribute("role", "button");
+      reviewCard.tabIndex = 0;
+      reviewCard.title = "Show these rows in the table";
+      const go = () => {
+        state.view.filter = t.unmatched ? "No_Match" : "Rejected";
+        state.view.page = 0;
+        showResults();
+        $("results").scrollIntoView({ behavior: "smooth", block: "start" });
+      };
+      reviewCard.addEventListener("click", go);
+      reviewCard.addEventListener("keydown", (e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), go()));
+    }
     $("kpis").replaceChildren(
-      kpi(fmt(t.total), null, "Total records"),
-      kpi(fmt(t.matched), pct(t.matched, t.total), "Matched to a tract"),
-      kpi(fmt(t.unmatched), pct(t.unmatched, t.total), "Unmatched"),
-      kpi(fmt(t.rejected), null, "Rejected (missing data)")
+      kpi(t.total, null, "Total records"),
+      matchedCard,
+      kpi(t.censusAlt + t.external, null, "Found by a backup lookup"),
+      reviewCard
     );
 
     const counts = { Matched: t.census, Matched_Fallback: t.censusAlt, Matched_External: t.external, No_Match: t.unmatched, Rejected: t.rejected };
@@ -672,15 +695,41 @@
     });
   }
 
+  const REDUCE_MOTION = !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+
+  /** Animate a number from 0 up to its value (instant with reduced motion). */
+  function countUp(node, value) {
+    if (REDUCE_MOTION || value < 4) {
+      node.textContent = fmt(value);
+      return;
+    }
+    const start = performance.now();
+    const step = (now) => {
+      const k = Math.min(1, (now - start) / 650);
+      node.textContent = fmt(Math.round(value * (1 - Math.pow(1 - k, 3))));
+      if (k < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+
   function kpi(value, sub, label) {
-    return el("div", { class: "kpi" }, el("b", null, value, sub ? el("small", { text: sub }) : null), el("span", { text: label }));
+    const num = el("span", { class: "kpi-num" });
+    countUp(num, value);
+    return el("div", { class: "kpi" }, el("b", null, num, sub ? el("small", { text: sub }) : null), el("span", { class: "kpi-label", text: label }));
   }
 
   function renderChips(counts, total) {
     const chips = [["all", "All", total]].concat(
       STATUS_ORDER.filter((s) => counts[s]).map((s) => [s, STATUS_LABELS[s], counts[s]])
     );
+    const tractChip = state.view.tract
+      ? [el("button", {
+          class: "chip tract-chip", type: "button", "aria-pressed": "true", title: "Show all tracts",
+          onclick: () => clearTractFilter(),
+        }, "Tract " + state.view.tractName.replace(/^Census Tract /, ""), icon("x"))]
+      : [];
     $("chips").replaceChildren(
+      ...tractChip,
       ...chips.map(([key, label, n]) =>
         el("button", {
           class: "chip", type: "button", "aria-pressed": String(state.view.filter === key),
@@ -714,6 +763,7 @@
     const { filter, q, sortKey, sortDir } = state.view;
     const needle = q.trim().toLowerCase();
     let list = state.records.filter((r) => filter === "all" || r.match_status === filter);
+    if (state.view.tract) list = list.filter((r) => r.census_tract_geoid === state.view.tract);
     if (needle) {
       list = list.filter((r) => [r.id, state.edits.get(r) ?? r.address, r.census_tract_geoid].join(" ").toLowerCase().includes(needle));
     }
@@ -751,7 +801,7 @@
       body.append(el("tr", null, el("td", { class: "empty", colspan: String(COLUMNS.length), text: "No records match this filter." })));
     }
     for (const rec of pageRows) {
-      const tr = el("tr", { class: state.edits.has(rec) ? "edited" : null });
+      const tr = el("tr", { class: [state.edits.has(rec) ? "edited" : "", rec.match_status === "No_Match" ? "needs-review" : ""].join(" ").trim() || null });
       tr.dataset.id = rec.id;
       tr.append(el("td", { class: "mono", text: rec.id }));
       const addrCell = el("td");
@@ -786,6 +836,23 @@
         el("button", { class: "btn ghost sm", type: "button", disabled: state.view.page === 0, onclick: () => setPage(-1) }, icon("left"), "Previous"),
         el("button", { class: "btn ghost sm", type: "button", disabled: state.view.page >= pages - 1, onclick: () => setPage(1) }, "Next", icon("right")))
     );
+  }
+
+  /** The map picked a tract: show only its rows. */
+  function filterToTract(geoid, name) {
+    state.view.tract = geoid;
+    state.view.tractName = name || geoid;
+    state.view.filter = "all";
+    state.view.page = 0;
+    showResults();
+  }
+
+  function clearTractFilter() {
+    state.view.tract = "";
+    state.view.tractName = "";
+    state.view.page = 0;
+    if (window.A2TMap) A2TMap.clearSelection();
+    showResults();
   }
 
   function sortBy(key) {
@@ -918,6 +985,7 @@
   $("dl-share").addEventListener("click", () => download(A2TGeocoder.shareRows(state.records, state.cols), "results_to_share.xlsx"));
   $("dl-full").addEventListener("click", () => download(A2TGeocoder.resultRows(state.records, state.cols), "results.xlsx"));
   $("map-refit").addEventListener("click", () => window.A2TMap && A2TMap.refit());
+  if (window.A2TMap) A2TMap.onSelect(filterToTract);
   $("map-streets").addEventListener("change", (e) => window.A2TMap && A2TMap.setStreetMap(e.target.checked));
   $("show-unmatched").addEventListener("click", () => {
     state.view.filter = "No_Match";

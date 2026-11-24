@@ -37,6 +37,11 @@
   let baseLayer = null;
   let baseOn = false;
   let vectorLoading = null;
+  let layerByGeoid = new Map();
+  let currentBreaks = [];
+  let selected = "";
+  let selectHandler = null;
+  const reduceMotion = !!(root.matchMedia && root.matchMedia("(prefers-reduced-motion: reduce)").matches);
 
   const $ = (id) => document.getElementById(id);
   const fmt = (n) => n.toLocaleString();
@@ -52,6 +57,12 @@
     map.attributionControl.setPrefix(false);
     map.attributionControl.addAttribution("Tract boundaries: U.S. Census Bureau");
     map.setView([35.0, -85.3], 9);
+    // The map fills its panel, whose height follows the side list.
+    if ("ResizeObserver" in root) new ResizeObserver(() => map.invalidateSize()).observe($("tract-map"));
+    map.on("zoomend", () => {
+      if (tractLayer) tractLayer.eachLayer((l) => tractLayer.resetStyle(l));
+      if (selected && layerByGeoid.get(selected)) layerByGeoid.get(selected).bringToFront();
+    });
   }
 
   /** Load (once) and index one state's boundary file. */
@@ -116,6 +127,115 @@
     return baseOn
       ? { color: "#8a94a3", weight: 0.6, fill: false }
       : { color: "#cfd6df", weight: 0.6, fillColor: "#eef1f5", fillOpacity: 1, fill: true };
+  }
+
+  // Tract shading fades as the user zooms in, so streets and labels underneath
+  // show through at neighborhood scale: about 0.85 at county scale, down to 0.3.
+  function fillFor() {
+    const z = map ? map.getZoom() : 9;
+    const k = Math.min(1, Math.max(0, (z - 10) / 4));
+    const top = baseOn ? 0.75 : 0.85;
+    return +(top - k * (top - (baseOn ? 0.28 : 0.4))).toFixed(2);
+  }
+
+  function tractStyle(f) {
+    const isSel = f.properties.g === selected;
+    return {
+      color: isSel ? "#ffc425" : baseOn ? "#0f3d7a" : "#ffffff",
+      weight: isSel ? 3.5 : 1,
+      fillColor: RAMP[rampIndex(A2T.breakIndex(f.properties.count, currentBreaks), currentBreaks.length)],
+      fillOpacity: fillFor(),
+    };
+  }
+
+  const shortName = (n) => String(n).replace(/^Census Tract /, "Tract ");
+
+  /** Count a number up from 0 when the map draws (skipped for reduced motion). */
+  function countUp(node, value) {
+    if (reduceMotion || value < 4) {
+      node.textContent = fmt(value);
+      return;
+    }
+    const start = performance.now();
+    const dur = 700;
+    const step = (now) => {
+      const k = Math.min(1, (now - start) / dur);
+      node.textContent = fmt(Math.round(value * (1 - Math.pow(1 - k, 3))));
+      if (k < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+
+  function hover(g, on) {
+    const layer = layerByGeoid.get(g);
+    if (!layer) return;
+    if (on) {
+      layer.setStyle({ color: "#002147", weight: 2.5 });
+      layer.bringToFront();
+    } else {
+      tractLayer.resetStyle(layer);
+      if (g !== selected && selected && layerByGeoid.get(selected)) layerByGeoid.get(selected).bringToFront();
+    }
+    document.querySelectorAll('#top-tracts [data-g="' + g + '"]').forEach((b) => b.classList.toggle("hot", on));
+  }
+
+  /** Highlight one tract (gold outline), optionally zooming to it. */
+  function select(g, zoom) {
+    selected = layerByGeoid.has(g) ? g : "";
+    if (tractLayer) tractLayer.eachLayer((l) => tractLayer.resetStyle(l));
+    const layer = layerByGeoid.get(selected);
+    if (layer) {
+      layer.bringToFront();
+      if (zoom) map.fitBounds(layer.getBounds(), { padding: [60, 60], maxZoom: 14 });
+    }
+    document.querySelectorAll("#top-tracts button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.g === selected)));
+  }
+
+  function choose(g) {
+    select(g, true);
+    const layer = layerByGeoid.get(g);
+    if (selectHandler) selectHandler(g, layer ? layer.feature.properties.n : g);
+  }
+
+  function renderTop(features) {
+    const top = features
+      .slice()
+      .sort((a, b) => b.count - a.count || a.f.properties.g.localeCompare(b.f.properties.g))
+      .slice(0, 6);
+    const max = top.length ? top[0].count : 1;
+    const items = top.map((x) => {
+      const p = x.f.properties;
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "tt";
+      btn.dataset.g = p.g;
+      btn.setAttribute("aria-pressed", String(p.g === selected));
+      btn.title = "Zoom to " + p.n + " and show its rows";
+      const name = document.createElement("span");
+      name.className = "tt-name";
+      name.textContent = shortName(p.n);
+      const county = document.createElement("span");
+      county.className = "tt-county";
+      county.textContent = p.c;
+      const bar = document.createElement("span");
+      bar.className = "tt-bar";
+      const fill = document.createElement("i");
+      fill.style.background = RAMP[rampIndex(A2T.breakIndex(x.count, currentBreaks), currentBreaks.length)];
+      fill.style.setProperty("--w", Math.max(6, (x.count / max) * 100) + "%");
+      bar.append(fill);
+      const n = document.createElement("b");
+      n.textContent = fmt(x.count);
+      btn.append(name, n, county, bar);
+      btn.addEventListener("click", () => choose(p.g));
+      btn.addEventListener("mouseenter", () => hover(p.g, true));
+      btn.addEventListener("mouseleave", () => hover(p.g, false));
+      btn.addEventListener("focus", () => hover(p.g, true));
+      btn.addEventListener("blur", () => hover(p.g, false));
+      const li = document.createElement("li");
+      li.append(btn);
+      return li;
+    });
+    $("top-tracts").replaceChildren(...items);
   }
 
   function restyle() {
@@ -281,6 +401,9 @@
     }
     const breaks = A2T.countBreaks(features.map((x) => x.count));
 
+    currentBreaks = breaks;
+    layerByGeoid = new Map();
+    if (!features.some((x) => x.f.properties.g === selected)) selected = "";
     if (tractLayer) tractLayer.remove();
     if (contextLayer) contextLayer.remove();
     if (labelLayer) labelLayer.remove();
@@ -315,38 +438,55 @@
     tractLayer = L.geoJSON(
       { type: "FeatureCollection", features: features.map((x) => ({ ...x.f, properties: { ...x.f.properties, count: x.count } })) },
       {
-        style: (f) => ({
-          color: baseOn ? "#0f3d7a" : "#ffffff",
-          weight: 1,
-          fillColor: RAMP[rampIndex(A2T.breakIndex(f.properties.count, breaks), breaks.length)],
-          fillOpacity: baseOn ? 0.75 : 0.85,
-        }),
+        style: tractStyle,
         onEachFeature: (f, layer) => {
+          layerByGeoid.set(f.properties.g, layer);
           layer.bindTooltip(tooltipFor(f, f.properties.count), { sticky: true, className: "map-tip" });
           layer.on({
-            mouseover: () => {
-              layer.setStyle({ color: "#002147", weight: 2.5 });
-              layer.bringToFront();
-            },
-            mouseout: () => tractLayer.resetStyle(layer),
+            mouseover: () => hover(f.properties.g, true),
+            mouseout: () => hover(f.properties.g, false),
+            click: () => choose(f.properties.g),
           });
         },
       }
     ).addTo(map);
 
+    // Tracts fade in from the lightest class to the darkest.
+    if (!reduceMotion) {
+      tractLayer.eachLayer((layer) => {
+        const el = layer.getElement && layer.getElement();
+        if (!el) return;
+        const cls = A2T.breakIndex(layer.feature.properties.count, breaks);
+        el.classList.add("tract-in");
+        el.style.animationDelay = Math.round(cls * 160 + Math.random() * 140) + "ms";
+      });
+    }
+
     labelLayer.addTo(map);
+    renderLegend(breaks);
+    renderTop(features);
+    map.invalidateSize();
     lastBounds = tractLayer.getBounds();
     refit();
-    renderLegend(breaks);
+    if (selected) select(selected, false);
 
     const total = features.reduce((s, x) => s + x.count, 0);
-    const top = features.reduce((a, b) => (b.count > a.count ? b : a), features[0]);
-    let text = fmt(total) + (total === 1 ? " record" : " records") + " in " + fmt(features.length) +
-      (features.length === 1 ? " tract" : " tracts") + ".";
-    if (top) text += " Most: " + top.f.properties.n + ", " + top.f.properties.c + " (" + fmt(top.count) + ").";
+    const counties = new Set(features.map((x) => x.f.properties.g.slice(0, 5))).size;
+    countUp($("map-tracts"), features.length);
+    $("map-tracts-label").textContent = features.length === 1 ? "tract" : "tracts";
+    let text = fmt(total) + (total === 1 ? " record" : " records") + " mapped across " + fmt(counties) +
+      (counties === 1 ? " county." : " counties.");
     if (missing) text += " " + fmt(missing) + " matched " + (missing === 1 ? "record has a tract" : "records have tracts") + " not on this map.";
     setStatus(text);
   }
 
-  root.A2TMap = { update, refit, setStreetMap };
+  root.A2TMap = {
+    update,
+    refit,
+    setStreetMap,
+    /** Clear the highlighted tract (the table's tract filter was removed). */
+    clearSelection: () => select("", false),
+    /** fn(geoid, tractName) runs when the user picks a tract on the map or in the list. */
+    onSelect: (fn) => (selectHandler = fn),
+  };
 })(typeof self !== "undefined" ? self : this);
