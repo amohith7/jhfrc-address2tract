@@ -247,6 +247,8 @@ tr.flash { animation: flash 1.6s var(--ease); }
 .breakdown { margin: 18px 0 6px; }
 .map-card { margin: 18px 0 6px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); padding: 14px 16px 12px; }
 .map-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.map-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; }
+.map-actions .check { margin: 0; font-size: .9rem; }
 .map-head h3 { font: 500 1.15rem var(--heading); color: var(--navy); margin: 0; }
 .tract-map { height: 420px; border-radius: 8px; border: 1px solid var(--line-soft); background: #fcfcfb; z-index: 0; }
 .map-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 18px; margin-top: 10px; }

@@ -918,6 +918,7 @@
   $("dl-share").addEventListener("click", () => download(A2TGeocoder.shareRows(state.records, state.cols), "results_to_share.xlsx"));
   $("dl-full").addEventListener("click", () => download(A2TGeocoder.resultRows(state.records, state.cols), "results.xlsx"));
   $("map-refit").addEventListener("click", () => window.A2TMap && A2TMap.refit());
+  $("map-streets").addEventListener("change", (e) => window.A2TMap && A2TMap.setStreetMap(e.target.checked));
   $("show-unmatched").addEventListener("click", () => {
     state.view.filter = "No_Match";
     state.view.page = 0;

@@ -2,10 +2,15 @@
  * address2tract web: results map. Shades each census tract by how many of
  * the user's records fall in it.
  *
- * Private by design: tract boundaries are loaded from this site
- * (assets/tracts/<state FIPS>.json, built by scripts/build_tract_maps.py) and
- * there is no street basemap, so no tract ID, address or map view is sent to
- * any other service. County lines come from the same tract borders.
+ * Private by default: tract boundaries are loaded from this site
+ * (assets/tracts/<state FIPS>.json, built by scripts/build_tract_maps.py), so
+ * no tract ID or address is ever sent to a map service. County lines come
+ * from the same tract borders.
+ *
+ * Street map (off until the user switches it on): the Esri World Navigation
+ * vector basemap, as on the JHFRC Tract Finder, drawn with MapLibre GL (loaded
+ * only when needed). If Esri cannot load, OpenStreetMap, then CARTO. Tile
+ * services see only the map area shown.
  */
 (function (root) {
   "use strict";
@@ -15,6 +20,10 @@
   // the white map surface).
   const RAMP = ["#8fb6e8", "#5f97dd", "#3677cc", "#1f5aa6", "#0f3d7a"];
   const MAX_FIT_ZOOM = 13;
+  const MAPLIBRE_DIR = "assets/vendor/maplibre/";
+  const MAPLIBRE_VERSION = "4.7.1";
+  const ESRI_STYLE = "https://basemapstyles-api.arcgis.com/arcgis/rest/services/styles/v2/styles/arcgis/navigation?token=";
+  const BASEMAP_KEY = ((root.A2T_CONFIG || {}).basemapKey || "").trim();
 
   const states = new Map(); // state FIPS -> Promise<{tracts: Map(geoid -> feature), counties: geometry}>
   let map = null;
@@ -24,6 +33,10 @@
   let lastBounds = null;
   let lastKey = "";
   let seq = 0;
+  let backdropLayers = [];
+  let baseLayer = null;
+  let baseOn = false;
+  let vectorLoading = null;
 
   const $ = (id) => document.getElementById(id);
   const fmt = (n) => n.toLocaleString();
@@ -97,6 +110,129 @@
     return n <= 1 ? RAMP.length - 1 : Math.round((i * (RAMP.length - 1)) / (n - 1));
   }
 
+  // With a street map underneath, the grey tract grid turns to outlines only so
+  // streets show through.
+  function backdropStyle() {
+    return baseOn
+      ? { color: "#8a94a3", weight: 0.6, fill: false }
+      : { color: "#cfd6df", weight: 0.6, fillColor: "#eef1f5", fillOpacity: 1, fill: true };
+  }
+
+  function restyle() {
+    backdropLayers.forEach((l) => l.setStyle(backdropStyle()));
+    if (tractLayer) tractLayer.eachLayer((l) => tractLayer.resetStyle(l));
+  }
+
+  // ------------------------------------------------------------ street map
+
+  function loadScript(src) {
+    return new Promise((resolve, reject) => {
+      const s = document.createElement("script");
+      s.src = src;
+      s.onload = resolve;
+      s.onerror = () => reject(new Error("could not load " + src));
+      document.head.appendChild(s);
+    });
+  }
+
+  /** MapLibre GL and its Leaflet bridge, fetched from this site on first use. */
+  function loadVector() {
+    if (!vectorLoading) {
+      const v = "?v=" + MAPLIBRE_VERSION;
+      const css = document.createElement("link");
+      css.rel = "stylesheet";
+      css.href = MAPLIBRE_DIR + "maplibre-gl.css" + v;
+      document.head.appendChild(css);
+      vectorLoading = loadScript(MAPLIBRE_DIR + "maplibre-gl.js" + v).then(() =>
+        loadScript(MAPLIBRE_DIR + "leaflet-maplibre-gl.js" + v)
+      );
+      vectorLoading.catch(() => (vectorLoading = null));
+    }
+    return vectorLoading;
+  }
+
+  function webglAvailable() {
+    try {
+      const c = document.createElement("canvas");
+      return !!(c.getContext("webgl2") || c.getContext("webgl"));
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function setBase(layer, provider) {
+    if (baseLayer) baseLayer.remove();
+    baseLayer = layer;
+    if (layer) layer.addTo(map);
+    const note = $("map-base-note");
+    note.hidden = !provider;
+    note.textContent = provider
+      ? "Street map by " + provider + ". " + provider + " receives the map area shown, never your addresses or tract IDs."
+      : "";
+    restyle();
+  }
+
+  function useCarto() {
+    if (!baseOn) return;
+    setBase(
+      L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
+        attribution: "\u00a9 OpenStreetMap contributors \u00a9 CARTO",
+        subdomains: "abcd",
+        maxZoom: 19,
+      }),
+      "CARTO"
+    );
+  }
+
+  function useOsm() {
+    if (!baseOn) return;
+    const osm = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: "\u00a9 OpenStreetMap contributors",
+      maxZoom: 19,
+    });
+    osm.once("tileerror", () => {
+      if (baseLayer === osm) useCarto();
+    });
+    setBase(osm, "OpenStreetMap");
+  }
+
+  async function useEsri() {
+    if (!BASEMAP_KEY || !webglAvailable()) return useOsm();
+    try {
+      await loadVector();
+    } catch (_) {
+      return useOsm();
+    }
+    if (!baseOn) return;
+    let esri;
+    try {
+      esri = L.maplibreGL({ style: ESRI_STYLE + encodeURIComponent(BASEMAP_KEY), attribution: "Powered by Esri" });
+      setBase(esri, "Esri");
+    } catch (_) {
+      return useOsm();
+    }
+    const gl = esri.getMaplibreMap && esri.getMaplibreMap();
+    if (gl && gl.on) {
+      // Some Esri styles name sprite icons missing from the sheet.
+      gl.on("styleimagemissing", (ev) => {
+        try {
+          if (ev && ev.id && !gl.hasImage(ev.id)) gl.addImage(ev.id, { width: 1, height: 1, data: new Uint8Array(4) });
+        } catch (_) {}
+      });
+      gl.on("error", () => {
+        if (baseLayer === esri) useOsm();
+      });
+    }
+  }
+
+  /** Switch the street map on or off. */
+  function setStreetMap(on) {
+    baseOn = !!on;
+    if (!map) return;
+    if (baseOn) useEsri();
+    else setBase(null, "");
+  }
+
   /** Re-zoom to the tracts on the map. */
   function refit() {
     if (map && lastBounds) map.fitBounds(lastBounds, { padding: [24, 24], maxZoom: MAX_FIT_ZOOM });
@@ -112,7 +248,9 @@
       return;
     }
     wrap.hidden = false;
+    const firstDraw = !map;
     ensureMap();
+    if (firstDraw && baseOn) setStreetMap(true);
     map.invalidateSize();
     // Same tracts and counts as last time (e.g. only a table filter changed):
     // keep the user's current zoom.
@@ -159,11 +297,9 @@
       }
     }
     const backdrop = [...byCounty.values()].map((fs) =>
-      L.geoJSON({ type: "FeatureCollection", features: fs }, {
-        interactive: false,
-        style: { color: "#cfd6df", weight: 0.6, fillColor: "#eef1f5", fillOpacity: 1 },
-      })
+      L.geoJSON({ type: "FeatureCollection", features: fs }, { interactive: false, style: backdropStyle })
     );
+    backdropLayers = backdrop;
     const labels = backdrop.map((layer, i) => {
       const name = [...byCounty.values()][i][0].properties.c;
       return L.tooltip({ permanent: true, direction: "center", className: "map-county-label", interactive: false })
@@ -180,10 +316,10 @@
       { type: "FeatureCollection", features: features.map((x) => ({ ...x.f, properties: { ...x.f.properties, count: x.count } })) },
       {
         style: (f) => ({
-          color: "#ffffff",
+          color: baseOn ? "#0f3d7a" : "#ffffff",
           weight: 1,
           fillColor: RAMP[rampIndex(A2T.breakIndex(f.properties.count, breaks), breaks.length)],
-          fillOpacity: 0.85,
+          fillOpacity: baseOn ? 0.75 : 0.85,
         }),
         onEachFeature: (f, layer) => {
           layer.bindTooltip(tooltipFor(f, f.properties.count), { sticky: true, className: "map-tip" });
@@ -212,5 +348,5 @@
     setStatus(text);
   }
 
-  root.A2TMap = { update, refit };
+  root.A2TMap = { update, refit, setStreetMap };
 })(typeof self !== "undefined" ? self : this);
