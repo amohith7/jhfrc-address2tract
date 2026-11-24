@@ -157,3 +157,34 @@ test("guessColumns: a lone address column is a full address; next to city/ZIP it
   assert.equal(g.address, "");
   assert.equal(g.city, "City");
 });
+
+test("tractCounts counts matched records per 11-digit tract", () => {
+  const counts = A2T.tractCounts([
+    { census_tract_geoid: "47065003100" },
+    { census_tract_geoid: "47065003100" },
+    { census_tract_geoid: "1001020100" }, // leading zero restored
+    { census_tract_geoid: "" },
+    {},
+  ]);
+  assert.deepEqual([...counts], [["47065003100", 2], ["01001020100", 1]]);
+});
+
+test("countBreaks gives one class per value when few, quantiles otherwise", () => {
+  assert.deepEqual(A2T.countBreaks([]), []);
+  assert.deepEqual(A2T.countBreaks([1, 1, 2, 7]), [1, 2, 7]);
+  const many = [1, 1, 1, 1, 2, 2, 3, 4, 5, 8, 12, 20, 40, 41, 90];
+  const b = A2T.countBreaks(many, 5);
+  assert.ok(b.length <= 5);
+  assert.equal(b[b.length - 1], 90);
+  for (let i = 1; i < b.length; i++) assert.ok(b[i] > b[i - 1]);
+  for (const v of many) assert.ok(A2T.breakIndex(v, b) >= 0 && A2T.breakIndex(v, b) < b.length);
+});
+
+test("breakIndex and breakLabels describe the classes", () => {
+  const b = [1, 3, 7];
+  assert.equal(A2T.breakIndex(1, b), 0);
+  assert.equal(A2T.breakIndex(2, b), 1);
+  assert.equal(A2T.breakIndex(7, b), 2);
+  assert.equal(A2T.breakIndex(99, b), 2);
+  assert.deepEqual(A2T.breakLabels(b), ["1", "2-3", "4-7"]);
+});

@@ -245,6 +245,24 @@ tr.flash { animation: flash 1.6s var(--ease); }
 .kpi span { color: var(--muted); font-size: .88rem; }
 .kpi small { color: var(--muted); font-weight: 600; margin-left: 6px; font-size: .95rem; }
 .breakdown { margin: 18px 0 6px; }
+.map-card { margin: 18px 0 6px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); padding: 14px 16px 12px; }
+.map-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.map-head h3 { font: 500 1.15rem var(--heading); color: var(--navy); margin: 0; }
+.tract-map { height: 420px; border-radius: 8px; border: 1px solid var(--line-soft); background: #fcfcfb; z-index: 0; }
+.map-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 18px; margin-top: 10px; }
+.map-foot p { margin: 0; }
+.map-legend { margin: 0; }
+.map-key { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; }
+.map-key-title { font-size: .85rem; font-weight: 700; color: var(--ink); }
+.map-legend i { width: 14px; height: 14px; border-radius: 3px; }
+.map-card > p.small { margin: 8px 0 0; }
+.map-tip { font: 400 .86rem var(--body); color: var(--ink); line-height: 1.4; }
+.map-tip strong { color: var(--navy); }
+.map-tip-count { font-weight: 700; margin-top: 2px; }
+.leaflet-container { font-family: var(--body); }
+.leaflet-tooltip.map-county-label { background: transparent; border: 0; box-shadow: none; padding: 0; color: #3b4654; font: 600 .78rem var(--body); letter-spacing: .02em; text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 3px #fff; pointer-events: none; }
+.leaflet-tooltip.map-county-label::before { display: none; }
+@media (max-width: 640px) { .tract-map { height: 320px; } }
 .stack { display: flex; height: 14px; border-radius: 999px; overflow: hidden; background: var(--line-soft); }
 .stack i { display: block; height: 100%; width: 0; transition: width .8s var(--ease); }
 .legend { list-style: none; display: flex; flex-wrap: wrap; gap: 6px 18px; padding: 0; margin: 10px 0 0; font-size: .88rem; color: var(--muted); }
