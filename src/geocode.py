@@ -40,15 +40,18 @@ DEFAULT_CONCURRENCY = 6
 BATCH_URL = "https://geocoding.geo.census.gov/geocoder/geographies/addressbatch"
 ONELINE_URL = "https://geocoding.geo.census.gov/geocoder/geographies/onelineaddress"
 
+# Current address file, 2020 Census tract geography: tracts line up with
+# other 2020-tract data (ACS, CDC PLACES) and with the cb_2020 tract file
+# the spatial join uses, and do not shift when "Current" geography rolls.
 BENCHMARK = "Public_AR_Current"
-VINTAGE = "Current_Current"
+VINTAGE = "Census2020_Current"
 
 # Ordered (benchmark, vintage) pairs the single-address fallback sweeps through.
 # The current address-range file (Public_AR_Current) misses some real addresses
 # whose house-number ranges only exist in the 2020 file; retrying Census2020
 # recovers a meaningful share of them (verified against the live API).
 FALLBACK_BENCHMARKS = [
-    ("Public_AR_Current", "Current_Current"),
+    ("Public_AR_Current", "Census2020_Current"),
     ("Public_AR_Census2020", "Census2020_Census2020"),
 ]
 

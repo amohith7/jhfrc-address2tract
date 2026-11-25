@@ -6,15 +6,17 @@
  *   1. Census geocoder, current address file, then the 2020 address file.
  *   2. One retry with a conservatively normalized street.
  *   3. Extra passes over records whose lookups failed on a network error.
- *   4. The residual goes to Nominatim (OpenStreetMap), at most 1 request per
- *      second, or, when an ArcGIS token is supplied, to the ArcGIS World
- *      Geocoder instead (the CLI's --external-provider arcgis).
- * The tract always comes from the Census Bureau's current tract geography.
+ *   4. Only when the user supplies an ArcGIS token: the residual goes to the
+ *      ArcGIS World Geocoder (the CLI's --external-provider arcgis). The public
+ *      OpenStreetMap (Nominatim) service is not used: its usage policy does not
+ *      allow bulk geocoding.
+ * Addresses are matched against the Census's current address file, but every
+ * tract is a 2020 Census tract (geography vintage Census2020_Current), the
+ * same boundaries as the tract maps on this site and the CLI's tract file.
  *
  * Network access goes through an injected `transport`, so tests can run the
  * pipeline offline:
  *   transport.jsonp(url, params) -> Promise<object>     (Census, JSONP)
- *   transport.fetchJson(url, params) -> Promise<any>    (Nominatim, CORS)
  *   transport.postForm(url, params) -> Promise<any>     (ArcGIS, CORS POST,
  *                                                         so the token travels
  *                                                         in the body, not the URL)
@@ -32,7 +34,6 @@
   const CENSUS = "https://geocoding.geo.census.gov/geocoder/geographies/";
   const ONELINE_URL = CENSUS + "onelineaddress";
   const COORDS_URL = CENSUS + "coordinates";
-  const NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";
   // Esri documents geocode-api for API keys; geocode.arcgis.com is the older
   // host that ArcGIS Online tokens (and the CLI) use. A token refused by one
   // is tried on the other before the step gives up.
@@ -43,9 +44,16 @@
   ];
   const ARCGIS_TEST_ADDRESS = "1600 Pennsylvania Ave NW, Washington, DC 20500";
 
+  // Tract geography is fixed at the 2020 Census so results line up with
+  // other 2020-tract data (CDC PLACES, ACS) and do not shift when the Census
+  // rolls its "Current" geography forward. Address files stay current.
+  const GEOGRAPHY_VINTAGE = "Census2020_Current";
+  const TRACT_GEOGRAPHY = "2020 Census tracts";
+
   // (benchmark, vintage) pairs swept in order (geocode.FALLBACK_BENCHMARKS).
+  // Both return 2020 tracts directly.
   const BENCHMARKS = [
-    ["Public_AR_Current", "Current_Current"],
+    ["Public_AR_Current", GEOGRAPHY_VINTAGE],
     ["Public_AR_Census2020", "Census2020_Census2020"],
   ];
 
@@ -53,10 +61,9 @@
     concurrency: 6, // config.yaml geocoder.concurrency
     retries: 3, // attempts per request on a network error
     retryPasses: 2, // config.yaml geocoder.retry_passes
-    externalDelayMs: 1100, // Nominatim policy: <= 1 request/second
     externalMaxResidual: 2000, // config.yaml external_max_residual
-    arcgisToken: "", // set => ArcGIS replaces Nominatim for the residual
-    arcgisConcurrency: 4, // ArcGIS has no 1 request/second rule
+    arcgisToken: "", // set => the Census residual is looked up with ArcGIS
+    arcgisConcurrency: 4,
   };
 
   const STATUS_NO_MATCH = "No_Match";
@@ -95,7 +102,7 @@
     return tracts.length ? A2T.cleanGeoid(tracts[0].GEOID) : "";
   }
 
-  /** Current-vintage tract GEOID for a point, or "" if it is in no tract. */
+  /** 2020 tract GEOID for a point, or "" if it is in no tract. */
   async function coordsToTract(lat, lon, ctx) {
     const data = await withRetry(
       () =>
@@ -103,7 +110,7 @@
           x: lon,
           y: lat,
           benchmark: "Public_AR_Current",
-          vintage: "Current_Current",
+          vintage: GEOGRAPHY_VINTAGE,
           layers: "Census Tracts",
           format: "jsonp",
         }),
@@ -173,9 +180,9 @@
     }
 
     const m = res.match;
-    // The current benchmark's vintage carries the current tract directly. A
-    // 2020-file match is re-located on the current tracts from its point.
-    let tract = res.benchmarkIndex === 0 ? tractFrom(m.geographies) : "";
+    // Both benchmarks return 2020 tracts. Only if the response carried none is
+    // the point looked up on its own.
+    let tract = tractFrom(m.geographies);
     if (!tract) {
       try {
         tract = await coordsToTract(m.coordinates.y, m.coordinates.x, ctx);
@@ -188,6 +195,11 @@
     rec.transientError = false;
     rec.cleaned_address = m.matchedAddress || "";
     rec.census_tract_geoid = tract;
+    rec.latitude = Number(m.coordinates.y);
+    rec.longitude = Number(m.coordinates.x);
+    rec.geocoder = "U.S. Census Bureau";
+    rec.address_reference = BENCHMARKS[res.benchmarkIndex][0];
+    rec.match_precision = normalized ? "Street address (tidied street name)" : "Street address";
     rec.match_status =
       res.benchmarkIndex === 0 && !normalized ? "Matched" : "Matched_Fallback";
     rec.error_reason = tract ? "" : REASON_NO_TRACT;
@@ -206,41 +218,6 @@
     await Promise.all(workers);
   }
 
-  async function geocodeExternal(rec, ctx) {
-    const query = {
-      q: rec.address,
-      format: "jsonv2",
-      limit: 5,
-      countrycodes: "us",
-      addressdetails: 0,
-    };
-    let candidates;
-    try {
-      candidates = await withRetry(
-        () => ctx.transport.fetchJson(NOMINATIM_URL, query),
-        ctx.transport,
-        2,
-        ctx.signal
-      );
-    } catch (err) {
-      if (err instanceof Cancelled) throw err;
-      return;
-    }
-    const point = A2T.pickNominatim(candidates);
-    if (!point) return;
-    let tract;
-    try {
-      tract = await coordsToTract(point.lat, point.lon, ctx);
-    } catch (err) {
-      if (err instanceof Cancelled) throw err;
-      return;
-    }
-    rec.cleaned_address = "";
-    rec.census_tract_geoid = tract;
-    rec.match_status = "Matched_External";
-    rec.error_reason = tract ? "" : REASON_NO_TRACT;
-  }
-
   /**
    * Plain-language text for an ArcGIS {error: {...}} payload, ending with
    * ArcGIS's own code and message so a token problem can be diagnosed.
@@ -257,6 +234,14 @@
     if (code === 403) return "ArcGIS refused the request; the token may lack geocoding rights or credits" + said;
     return "ArcGIS returned an error" + said;
   }
+
+  // Plain names for the ArcGIS address types pickArcgis accepts.
+  const ARCGIS_PRECISION = {
+    PointAddress: "Rooftop or parcel",
+    Subaddress: "Rooftop or parcel (unit)",
+    StreetAddress: "Street address",
+    StreetAddressExt: "Street address",
+  };
 
   /** Tokens never contain whitespace; drop any picked up when copying. */
   function cleanToken(token) {
@@ -334,6 +319,11 @@
     }
     rec.cleaned_address = "";
     rec.census_tract_geoid = tract;
+    rec.latitude = point.lat;
+    rec.longitude = point.lon;
+    rec.geocoder = "ArcGIS World Geocoder";
+    rec.address_reference = "ArcGIS World Geocoder";
+    rec.match_precision = ARCGIS_PRECISION[point.type] || point.type || "";
     rec.match_status = "Matched_External";
     rec.error_reason = tract ? "" : REASON_NO_TRACT;
   }
@@ -356,6 +346,11 @@
         address,
         cleaned_address: "",
         census_tract_geoid: "",
+        latitude: "",
+        longitude: "",
+        geocoder: "",
+        address_reference: "",
+        match_precision: "",
         match_status: rejected ? "Rejected" : STATUS_NO_MATCH,
         error_reason: rejected ? "Missing ID or address" : REASON_NO_GEOCODE,
         transientError: false,
@@ -365,8 +360,9 @@
 
   /**
    * Geocode every pending record in place. onProgress({stage, done, total}) is
-   * called as work completes; stage is "census", "retry" or "external".
-   * onProviderError(message) fires if the external provider refuses the
+   * called as work completes; stage is "census", "retry" or "external" (the
+   * last only with an ArcGIS token; without one nothing leaves for any
+   * service but the Census). onProviderError(message) fires if ArcGIS refuses the
    * token; that stage then stops and the remaining rows stay No_Match.
    */
   async function run(records, { transport, onProgress, onRecord, onProviderError, signal, options } = {}) {
@@ -413,7 +409,7 @@
       .filter((r) => r.match_status === STATUS_NO_MATCH)
       .filter((r) => A2T.isGeocodable(r.address) && !A2T.isPoBox(r.address))
       .slice(0, ctx.opts.externalMaxResidual);
-    if (ctx.opts.arcgisToken) {
+    if (residual.length && ctx.opts.arcgisToken) {
       // ArcGIS: parallel workers; the first refusal stops every worker.
       let n = 0;
       let refused = null;
@@ -441,14 +437,6 @@
         }
         (onProviderError || (() => {}))(refused);
       }
-    } else {
-      for (let i = 0; i < residual.length; i++) {
-        checkCancel(signal);
-        if (i > 0) await transport.sleep(ctx.opts.externalDelayMs);
-        await geocodeExternal(residual[i], ctx);
-        emit(residual[i]);
-        report({ stage: "external", done: i + 1, total: residual.length });
-      }
     }
 
     for (const r of records) {
@@ -458,8 +446,12 @@
     return records;
   }
 
-  /** Full output rows: ID, the input address column(s), then the results. */
-  function resultRows(records, cols) {
+  /**
+   * Full output rows: ID, the input address column(s), then the results.
+   * `processedOn` is the run date (YYYY-MM-DD), repeated on every row so the
+   * file still says when and how it was made after it is copied elsewhere.
+   */
+  function resultRows(records, cols, processedOn = "") {
     const corrected = records.some((r) => r.corrected_address);
     const inputCols = [cols.id].concat(
       cols.address ? [cols.address] : [cols.street, cols.city, cols.state, cols.zip]
@@ -469,24 +461,65 @@
       for (const c of inputCols) out[c] = c === cols.id ? r.id : A2T.cleanCell(r.row[c]);
       // Only present when the user fixed an address on the results page.
       if (corrected) out.corrected_address = r.corrected_address || "";
-      out.cleaned_address = r.cleaned_address;
+      out.matched_address = r.cleaned_address;
+      out.latitude = r.latitude === "" || r.latitude == null ? "" : r.latitude;
+      out.longitude = r.longitude === "" || r.longitude == null ? "" : r.longitude;
       out.census_tract_geoid = r.census_tract_geoid;
       out.match_status = r.match_status;
+      out.match_precision = r.match_precision || "";
+      out.geocoder = r.geocoder || "";
+      out.address_reference = r.address_reference || "";
+      out.geography_vintage = r.census_tract_geoid ? GEOGRAPHY_VINTAGE : "";
+      out.processed_on = processedOn;
       out.error_reason = r.error_reason;
       return out;
     });
   }
 
-  /** De-identified rows to share with JHFRC: ID, tract and status only. */
-  function shareRows(records, cols) {
-    return records.map((r) => ({
-      [cols.id]: r.id,
-      census_tract_geoid: r.census_tract_geoid,
-      match_status: r.match_status,
-    }));
+  /**
+   * Processing summary for JHFRC's quality check: counts only, no IDs, no
+   * tracts. meta = {processedOn, arcgis (bool), appVersion}.
+   */
+  function processingSummary(records, meta = {}) {
+    const t = A2T.tally(records);
+    const rate = (n, d) => (d ? Math.round((n / d) * 1000) / 10 + "%" : "0%");
+    const usable = t.total - t.rejected;
+    return [
+      { item: "Records in file", value: t.total },
+      { item: "Records with an ID and an address", value: usable },
+      { item: "Matched to a tract", value: t.matched },
+      { item: "Not matched", value: t.unmatched },
+      { item: "Rejected (missing ID or address)", value: t.rejected },
+      { item: "Match rate, all records", value: rate(t.matched, t.total) },
+      { item: "Match rate, records with an ID and an address", value: rate(t.matched, usable) },
+      { item: "Matched by the Census, current address file", value: t.census },
+      { item: "Matched by the Census, 2020 address file or tidied street", value: t.censusAlt },
+      { item: "Matched by ArcGIS", value: t.external },
+      { item: "ArcGIS lookup used", value: meta.arcgis ? "Yes" : "No" },
+      { item: "Address reference", value: "Census " + BENCHMARKS.map((b) => b[0]).join(", then ") },
+      { item: "Tract geography", value: TRACT_GEOGRAPHY + " (" + GEOGRAPHY_VINTAGE + ")" },
+      { item: "Processed on", value: meta.processedOn || "" },
+      { item: "address2tract web version", value: meta.appVersion || "" },
+    ];
+  }
+
+  /**
+   * Records per tract, busiest first. A tract with fewer than minCount records
+   * (0 = show every count) has its count replaced with "<minCount", following
+   * whatever small-cell rule the user's data agreement sets.
+   */
+  function tractSummary(records, minCount = 0) {
+    return [...A2T.tractCounts(records)]
+      .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))
+      .map(([g, n]) => ({
+        census_tract_geoid: g,
+        records: minCount > 0 && n < minCount ? "<" + minCount : n,
+        geography_vintage: GEOGRAPHY_VINTAGE,
+      }));
   }
 
   return {
-    buildRecords, run, resultRows, shareRows, checkArcgisToken, Cancelled, ProviderError, DEFAULTS,
+    buildRecords, run, resultRows, processingSummary, tractSummary, checkArcgisToken,
+    Cancelled, ProviderError, DEFAULTS, GEOGRAPHY_VINTAGE, TRACT_GEOGRAPHY,
   };
 });

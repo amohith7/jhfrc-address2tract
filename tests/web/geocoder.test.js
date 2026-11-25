@@ -22,13 +22,16 @@ const NO_MATCH = { result: { addressMatches: [] } };
 
 /**
  * Fake transport. `census(address, benchmark)` returns a JSONP payload or
- * throws; `coords(x, y)` returns a GEOID; `nominatim(q)` returns candidates.
+ * throws; `coords(x, y)` returns a GEOID. Any other request (fetchJson, as
+ * the old OpenStreetMap step used) is recorded so tests can prove it never
+ * happens.
  */
-function fakeTransport({ census, coords, nominatim }) {
-  const calls = { census: [], coords: [], nominatim: [], sleeps: [] };
+function fakeTransport({ census, coords }) {
+  const calls = { census: [], coords: [], vintages: new Set(), other: [], sleeps: [] };
   return {
     calls,
     jsonp: async (url, p) => {
+      calls.vintages.add(p.vintage);
       if (url.endsWith("/onelineaddress")) {
         calls.census.push([p.address, p.benchmark]);
         return census(p.address, p.benchmark);
@@ -37,9 +40,9 @@ function fakeTransport({ census, coords, nominatim }) {
       const geoid = coords ? coords(p.x, p.y) : "";
       return { result: { geographies: { "Census Tracts": geoid ? [{ GEOID: geoid }] : [] } } };
     },
-    fetchJson: async (url, p) => {
-      calls.nominatim.push(p.q);
-      return nominatim ? nominatim(p.q) : [];
+    fetchJson: async (url) => {
+      calls.other.push(url);
+      return [];
     },
     sleep: async (ms) => {
       calls.sleeps.push(ms);
@@ -59,18 +62,45 @@ test("current-file match takes the tract straight from the Census response", asy
   assert.equal(recs[0].census_tract_geoid, "47065012400");
   assert.equal(recs[0].cleaned_address, "615 MCCALLIE AVE, CHATTANOOGA, TN, 37403");
   assert.equal(recs[0].error_reason, "");
+  assert.equal(recs[0].latitude, 35.04);
+  assert.equal(recs[0].longitude, -85.29);
+  assert.equal(recs[0].geocoder, "U.S. Census Bureau");
+  assert.equal(recs[0].address_reference, CURRENT);
   assert.equal(t.calls.coords.length, 0);
 });
 
-test("2020-file match is re-located on the current tracts", async () => {
+test("every Census request asks for 2020 tract geography", async () => {
+  const t = fakeTransport({
+    census: (a, b) => (b === CURRENT ? NO_MATCH : censusMatch(-85.3, 35.0, "", "X")),
+    coords: () => "47065012400",
+  });
+  await G.run(records([{ id: "1", addr: "1 Elm St, Chattanooga, TN" }]), { transport: t });
+  assert.deepEqual([...t.calls.vintages].sort(), ["Census2020_Census2020", "Census2020_Current"]);
+  assert.equal(G.GEOGRAPHY_VINTAGE, "Census2020_Current");
+});
+
+test("a 2020-address-file match takes its 2020 tract from the response", async () => {
   const t = fakeTransport({
     census: (a, b) => (b === CURRENT ? NO_MATCH : censusMatch(-72.6, 41.7, "09003000100", "X")),
-    coords: () => "09110000100",
+    coords: () => {
+      throw new Error("no point lookup needed");
+    },
   });
   const recs = await G.run(records([{ id: "1", addr: "1 Elm St, Hartford, CT" }]), { transport: t });
   assert.equal(recs[0].match_status, "Matched_Fallback");
-  assert.equal(recs[0].census_tract_geoid, "09110000100");
-  assert.deepEqual(t.calls.coords, [[-72.6, 41.7]]);
+  assert.equal(recs[0].census_tract_geoid, "09003000100");
+  assert.equal(recs[0].address_reference, "Public_AR_Census2020");
+  assert.equal(t.calls.coords.length, 0);
+});
+
+test("a match whose response carries no tract is looked up from its point", async () => {
+  const t = fakeTransport({
+    census: () => censusMatch(-85.2, 35.1, "", "X"),
+    coords: () => "47065011100",
+  });
+  const recs = await G.run(records([{ id: "1", addr: "1 Elm St, Chattanooga, TN" }]), { transport: t });
+  assert.equal(recs[0].census_tract_geoid, "47065011100");
+  assert.deepEqual(t.calls.coords, [[-85.2, 35.1]]);
 });
 
 test("normalized-street retry recovers an abbreviation miss", async () => {
@@ -109,41 +139,21 @@ test("a network failure is retried in a later pass, a genuine miss is not", asyn
   assert.ok(!("transientError" in recs[0]));
 });
 
-test("residual goes to Nominatim at 1 request/second, skipping PO boxes", async () => {
-  const t = fakeTransport({
-    census: () => NO_MATCH,
-    nominatim: (q) =>
-      q.startsWith("10 ")
-        ? [{ addresstype: "road", place_rank: 26, lat: "35.1", lon: "-85.2" }]
-        : [{ addresstype: "city", place_rank: 16, lat: "35", lon: "-85" }],
-    coords: () => "47065011100",
-  });
+test("without an ArcGIS token, nothing is sent anywhere but the Census", async () => {
+  const t = fakeTransport({ census: () => NO_MATCH });
+  t.postForm = async () => {
+    throw new Error("ArcGIS must not be called");
+  };
   const recs = await G.run(
     records([
       { id: "a", addr: "10 Rural Rd, Ooltewah, TN" },
-      { id: "b", addr: "PO Box 12, Chattanooga, TN" },
-      { id: "c", addr: "99 Unknown Way, Chattanooga, TN" },
+      { id: "b", addr: "99 Unknown Way, Chattanooga, TN" },
     ]),
     { transport: t }
   );
-  assert.equal(recs[0].match_status, "Matched_External");
-  assert.equal(recs[0].census_tract_geoid, "47065011100");
-  assert.equal(recs[1].match_status, "No_Match"); // PO box never sent out
-  assert.equal(recs[2].match_status, "No_Match"); // city centroid rejected
-  assert.deepEqual(t.calls.nominatim, ["10 Rural Rd, Ooltewah, TN", "99 Unknown Way, Chattanooga, TN"]);
-  assert.deepEqual(t.calls.sleeps, [1100]);
-});
-
-test("a point outside every tract is kept with an explanation", async () => {
-  const t = fakeTransport({
-    census: () => NO_MATCH,
-    nominatim: () => [{ addresstype: "road", place_rank: 27, lat: "30", lon: "-80" }],
-    coords: () => "",
-  });
-  const recs = await G.run(records([{ id: "1", addr: "1 Offshore Pier" }]), { transport: t });
-  assert.equal(recs[0].match_status, "Matched_External");
-  assert.equal(recs[0].census_tract_geoid, "");
-  assert.equal(recs[0].error_reason, "Coordinates found but did not fall within a Census tract boundary");
+  assert.deepEqual(recs.map((r) => r.match_status), ["No_Match", "No_Match"]);
+  assert.equal(t.calls.other.length, 0);
+  assert.equal(t.calls.sleeps.length, 0);
 });
 
 test("rows missing an ID or address are rejected and never geocoded", async () => {
@@ -159,33 +169,69 @@ test("rows missing an ID or address are rejected and never geocoded", async () =
   assert.deepEqual(recs.map((r) => r.match_status), ["Rejected", "Rejected", "Rejected"]);
   assert.equal(recs[0].error_reason, "Missing ID or address");
   assert.equal(t.calls.census.length, 0);
-  assert.equal(t.calls.nominatim.length, 0);
+  assert.equal(t.calls.other.length, 0);
 });
 
-test("output rows keep the input columns, and the share file has no address", async () => {
+test("output rows keep the input columns and add provider, precision and vintage", async () => {
   const cols = { id: "id", street: "s", city: "c", state: "st", zip: "z" };
   const t = fakeTransport({ census: () => censusMatch(-85, 35, "47065000100", "M") });
   const recs = await G.run(
     G.buildRecords([{ id: "007", s: "1 Main St", c: "Chattanooga", st: "TN", z: "37403.0", extra: "x" }], cols),
     { transport: t }
   );
-  assert.deepEqual(G.resultRows(recs, cols), [
+  assert.deepEqual(G.resultRows(recs, cols, "2026-11-25"), [
     {
       id: "007",
       s: "1 Main St",
       c: "Chattanooga",
       st: "TN",
       z: "37403",
-      cleaned_address: "M",
+      matched_address: "M",
+      latitude: 35,
+      longitude: -85,
       census_tract_geoid: "47065000100",
       match_status: "Matched",
+      match_precision: "Street address",
+      geocoder: "U.S. Census Bureau",
+      address_reference: "Public_AR_Current",
+      geography_vintage: "Census2020_Current",
+      processed_on: "2026-11-25",
       error_reason: "",
     },
   ]);
-  assert.deepEqual(G.shareRows(recs, cols), [
-    { id: "007", census_tract_geoid: "47065000100", match_status: "Matched" },
-  ]);
   assert.equal(t.calls.census[0][0], "1 Main St, Chattanooga, TN, 37403");
+});
+
+test("the processing summary has counts only, and the tract summary can hide small counts", async () => {
+  const t = fakeTransport({
+    census: (a) => (a.startsWith("9") ? NO_MATCH : censusMatch(-85, 35, a.startsWith("1") ? "47065000100" : "47065000200", "M")),
+  });
+  const rows = [
+    { id: "MRN-1", addr: "1 A St" },
+    { id: "MRN-2", addr: "1 B St" },
+    { id: "MRN-3", addr: "1 C St" },
+    { id: "MRN-4", addr: "2 D St" },
+    { id: "MRN-5", addr: "9 Nowhere" },
+    { id: "", addr: "1 E St" },
+  ];
+  const recs = await G.run(records(rows), { transport: t });
+  const summary = G.processingSummary(recs, { processedOn: "2026-11-25", arcgis: false, appVersion: "v" });
+  const text = JSON.stringify(summary);
+  assert.ok(!/MRN|470650/.test(text), "no IDs or tracts in the processing summary");
+  const get = (label) => summary.find((r) => r.item === label).value;
+  assert.equal(get("Records in file"), 6);
+  assert.equal(get("Matched to a tract"), 4);
+  assert.equal(get("Match rate, all records"), "66.7%");
+  assert.equal(get("Match rate, records with an ID and an address"), "80%");
+  assert.equal(get("ArcGIS lookup used"), "No");
+  assert.match(get("Tract geography"), /Census2020_Current/);
+
+  assert.deepEqual(G.tractSummary(recs), [
+    { census_tract_geoid: "47065000100", records: 3, geography_vintage: "Census2020_Current" },
+    { census_tract_geoid: "47065000200", records: 1, geography_vintage: "Census2020_Current" },
+  ]);
+  assert.deepEqual(G.tractSummary(recs, 5).map((r) => r.records), ["<5", "<5"]);
+  assert.deepEqual(G.tractSummary(recs, 2).map((r) => r.records), [3, "<2"]);
 });
 
 test("cancelling stops the run", async () => {
@@ -221,7 +267,6 @@ test("onRecord fires once per finished lookup, and a corrected address is report
   assert.equal(out[0].corrected_address, "");
   assert.equal(out[1].corrected_address, "615 McCallie Ave, Chattanooga, TN");
   assert.equal(out[1].addr, "61 McCalie Av, Chattanooga, TN"); // original input kept
-  assert.ok(!("corrected_address" in G.shareRows(recs, COLS)[1]));
 });
 
 // ------------------------------------------------------------------ ArcGIS
@@ -241,7 +286,7 @@ function arcgisTransport(arcgis) {
   return t;
 }
 
-test("with a token, ArcGIS replaces Nominatim and sends the token in the POST body", async () => {
+test("with a token, ArcGIS looks up the Census misses and gets the token in the POST body", async () => {
   const t = arcgisTransport(() => ({ candidates: [arcgisCandidate(-85.29, 35.04)] }));
   const recs = await G.run(records([{ id: "1", addr: "615 McCallie Ave, Chattanooga, TN 37403" }]), {
     transport: t,
@@ -249,13 +294,17 @@ test("with a token, ArcGIS replaces Nominatim and sends the token in the POST bo
   });
   assert.equal(recs[0].match_status, "Matched_External");
   assert.equal(recs[0].census_tract_geoid, "47065012400");
-  assert.equal(t.calls.nominatim.length, 0);
+  assert.equal(recs[0].geocoder, "ArcGIS World Geocoder");
+  assert.equal(recs[0].match_precision, "Rooftop or parcel");
+  assert.deepEqual([recs[0].latitude, recs[0].longitude], [35.04, -85.29]);
+  assert.ok(t.calls.vintages.has("Census2020_Current"), "ArcGIS points get 2020 tracts too");
+  assert.equal(t.calls.other.length, 0);
   assert.equal(t.calls.arcgis.length, 1);
   const { url, p } = t.calls.arcgis[0];
   assert.equal(p.token, "TEST-TOKEN");
   assert.ok(!url.includes("TEST-TOKEN") && !url.includes("?"), "token must not be in the URL");
   assert.equal(p.countryCode, "USA");
-  assert.equal(t.calls.sleeps.length, 0, "no Nominatim 1-second spacing for ArcGIS");
+  assert.equal(t.calls.sleeps.length, 0, "no 1-second spacing for ArcGIS");
 });
 
 test("ArcGIS candidates below street precision or score 90 are not accepted", async () => {
@@ -289,13 +338,16 @@ test("a refused token stops the ArcGIS step and is reported, not hidden as No_Ma
   }
 });
 
-test("without a token the residual still goes to Nominatim", async () => {
-  const t = arcgisTransport(() => {
-    throw new Error("ArcGIS must not be called");
+test("an ArcGIS point outside every tract is kept with an explanation", async () => {
+  const t = fakeTransport({ census: () => NO_MATCH, coords: () => "" });
+  t.postForm = async () => ({ candidates: [arcgisCandidate(-80, 30, "StreetAddress", 95)] });
+  const recs = await G.run(records([{ id: "1", addr: "1 Offshore Pier, Town, FL" }]), {
+    transport: t,
+    options: { arcgisToken: "T" },
   });
-  await G.run(records([{ id: "1", addr: "1 Main St, Town, TN" }]), { transport: t });
-  assert.equal(t.calls.arcgis.length, 0);
-  assert.equal(t.calls.nominatim.length, 1);
+  assert.equal(recs[0].match_status, "Matched_External");
+  assert.equal(recs[0].census_tract_geoid, "");
+  assert.equal(recs[0].error_reason, "Coordinates found but did not fall within a Census tract boundary");
 });
 
 test("a token refused by geocode-api is retried on geocode.arcgis.com, which is then kept", async () => {

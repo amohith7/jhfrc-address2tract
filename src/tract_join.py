@@ -23,15 +23,15 @@ logger = logging.getLogger(__name__)
 # U.S. Census Bureau cartographic boundary file (national, ~500k generalized).
 # Generalized geometry is small and fast but slightly simplified at boundaries.
 CENSUS_TRACT_URL = (
-    "https://www2.census.gov/geo/tiger/GENZ2024/shp/cb_2024_us_tract_500k.zip"
+    "https://www2.census.gov/geo/tiger/GENZ2020/shp/cb_2020_us_tract_500k.zip"
 )
 # Full-resolution TIGER/Line tract files are published per state (no national
-# file). Format: tl_2024_<stateFIPS>_tract.zip. Larger, but exact boundaries.
+# file). Format: tl_2020_<stateFIPS>_tract.zip. Larger, but exact boundaries.
 TIGER_TRACT_URL = (
-    "https://www2.census.gov/geo/tiger/TIGER2024/TRACT/tl_2024_{fips}_tract.zip"
+    "https://www2.census.gov/geo/tiger/TIGER2020/TRACT/tl_2020_{fips}_tract.zip"
 )
-TRACT_GPKG_NAME = "census_tracts.gpkg"
-TIGER_GPKG_NAME = "census_tracts_tiger.gpkg"
+TRACT_GPKG_NAME = "census_tracts_2020.gpkg"
+TIGER_GPKG_NAME = "census_tracts_tiger_2020.gpkg"
 TRACT_LAYER = "census_tracts"
 DEFAULT_REFERENCE_DIR = Path("data/reference")
 
@@ -40,9 +40,9 @@ DEFAULT_REFERENCE_DIR = Path("data/reference")
 # could place, via the centroid of the address's ZIP.
 ZCTA_GAZ_URL = (
     "https://www2.census.gov/geo/docs/maps-data/data/gazetteer/"
-    "2024_Gazetteer/2024_Gaz_zcta_national.zip"
+    "2020_Gazetteer/2020_Gaz_zcta_national.zip"
 )
-ZCTA_CENTROID_CACHE = "zcta_centroids.csv"
+ZCTA_CENTROID_CACHE = "zcta_centroids_2020.csv"
 
 
 def get_zcta_centroids(reference_dir: str = "data/reference") -> dict:
@@ -180,8 +180,8 @@ def _download_and_convert_tiger(
 
 def _download_and_convert(reference_dir: Path, gpkg_path: Path) -> None:
     """Download the Census tract shapefile and convert it to a GeoPackage."""
-    zip_path = reference_dir / "cb_2024_us_tract_500k.zip"
-    extract_dir = reference_dir / "cb_2024_us_tract_500k"
+    zip_path = reference_dir / "cb_2020_us_tract_500k.zip"
+    extract_dir = reference_dir / "cb_2020_us_tract_500k"
 
     print("\nCensus tract dataset not found locally.")
     print("Downloading from the U.S. Census Bureau. This only happens once.")

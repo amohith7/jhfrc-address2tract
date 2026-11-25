@@ -221,7 +221,7 @@
       const score = parseFloat(c.score != null ? c.score : attrs.Score) || 0;
       const loc = c.location || {};
       if (ARCGIS_OK_ADDR_TYPES.has(attrs.Addr_type) && score >= ARCGIS_MIN_SCORE && loc.x != null && loc.y != null) {
-        return { lat: parseFloat(loc.y), lon: parseFloat(loc.x) };
+        return { lat: parseFloat(loc.y), lon: parseFloat(loc.x), type: attrs.Addr_type, score };
       }
     }
     return null;
