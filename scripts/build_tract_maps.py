@@ -4,7 +4,7 @@ The map runs entirely in the browser: it loads these files from the site
 itself, so no tract ID, address or map view is sent to any other service.
 
 Source: the same Census cartographic boundary file the command-line tool joins
-against (src/tract_join.py, cb_2024_us_tract_500k). Each state becomes
+against (src/tract_join.py, cb_2020_us_tract_500k). Each state becomes
 docs/assets/tracts/<state FIPS>.json, a TopoJSON topology with one object,
 "tracts", whose features carry:
 
@@ -18,7 +18,7 @@ where the county changes. Borders are simplified (about 30 m) for display
 only; tract assignment happens elsewhere and is not affected.
 
 Usage:
-    python scripts/build_tract_maps.py --zip path/to/cb_2024_us_tract_500k.zip
+    python scripts/build_tract_maps.py --zip path/to/cb_2020_us_tract_500k.zip
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ from pathlib import Path
 import geopandas as gpd
 import topojson as tp
 
-SOURCE_URL = "https://www2.census.gov/geo/tiger/GENZ2024/shp/cb_2024_us_tract_500k.zip"
+SOURCE_URL = "https://www2.census.gov/geo/tiger/GENZ2020/shp/cb_2020_us_tract_500k.zip"
 DEFAULT_OUT = Path(__file__).resolve().parent.parent / "docs" / "assets" / "tracts"
 SIMPLIFY_DEGREES = 0.0003
 QUANTIZE = 1e5

@@ -6,12 +6,15 @@
   <title>Address to Census Tract | JHFRC</title>
   <meta name="description" content="Convert a file of addresses to U.S. Census tracts in your browser. Built by the Journey Health Foundation Research Center at UTC.">
   <meta name="theme-color" content="#002147">
+  <meta name="a2t-version" content="2026.11.25">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://geocoding.geo.census.gov; connect-src 'self' https://geocode-api.arcgis.com https://geocode.arcgis.com https://*.arcgis.com https://*.arcgisonline.com; img-src 'self' data: blob: https://tile.openstreetmap.org https://*.basemaps.cartocdn.com https://*.arcgis.com https://*.arcgisonline.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; worker-src 'self' blob:; child-src blob:; object-src 'none'; base-uri 'self'; form-action 'none'">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
   <link rel="icon" type="image/png" href="assets/favicon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600&family=Raleway:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="assets/vendor/leaflet.css?v=337bfca5">
-  <link rel="stylesheet" href="assets/style.css?v=79b04e7d">
+  <link rel="stylesheet" href="assets/style.css?v=6e810eeb">
 </head>
 <body>
   <a class="skip" href="#app">Skip to the tool</a>
@@ -89,7 +92,7 @@
     <section class="panel" data-panel="1" aria-labelledby="h1">
       <header class="panel-head">
         <h2 id="h1" tabindex="-1">Upload your file</h2>
-        <p>An Excel (.xlsx, .xls) or CSV file with a unique ID column and the address column(s).</p>
+        <p>An Excel (.xlsx, .xls) or CSV file with a unique ID column and the address column(s). Use a random study ID, not a medical record number or any other identifier.</p>
       </header>
 
       <label class="drop" id="drop">
@@ -132,6 +135,10 @@
         </div>
       </div>
 
+      <p class="templates muted small">Starting from scratch? Download a blank
+        <button class="linkish" type="button" data-template="xlsx">Excel template</button> or
+        <button class="linkish" type="button" data-template="csv">CSV template</button>.</p>
+
       <div class="panel-foot">
         <button class="btn ghost" type="button" data-action="sample"><svg class="ic"><use href="#i-play"/></svg> Use sample data</button>
         <button class="btn primary" type="button" id="to-columns" disabled>Continue <svg class="ic"><use href="#i-right"/></svg></button>
@@ -149,6 +156,7 @@
         <div class="field">
           <label for="col-id">Unique ID column <span class="req">required</span></label>
           <select id="col-id"></select>
+          <p class="field-warn" id="id-warning" hidden><svg class="ic"><use href="#i-alert"/></svg> This looks like a medical record, account or member number. Replace it with a random study ID before you continue.</p>
         </div>
         <fieldset class="segmented" aria-label="How are the addresses stored?">
           <legend>How are the addresses stored?</legend>
@@ -176,7 +184,7 @@
 
       <details class="arcgis-box" id="arcgis-box">
         <summary><svg class="ic"><use href="#i-shield"/></svg> Advanced: ArcGIS lookup <span class="muted">(optional, needs a token from JHFRC)</span></summary>
-        <p>If JHFRC sent you a temporary ArcGIS token, paste it here. Addresses the Census cannot find are then looked up with the ArcGIS World Geocoder instead of OpenStreetMap. Leave it blank to skip.</p>
+        <p>If JHFRC sent you a temporary ArcGIS token, paste it here. Addresses the Census cannot find are then looked up with the Esri ArcGIS World Geocoder. Leave it blank and only the Census is used.</p>
         <div class="token-row">
           <label class="sr-only" for="arcgis-token">ArcGIS token</label>
           <input type="password" id="arcgis-token" placeholder="Paste ArcGIS token" autocomplete="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore>
@@ -187,6 +195,21 @@
         <label class="check"><input type="checkbox" id="arcgis-show"> Show token</label>
         <p class="muted small">The token stays in this tab only. It is never saved, never added to the page address and never written to your results files, and it is sent only to ArcGIS. Closing the tab forgets it.</p>
       </details>
+
+      <fieldset class="ack">
+        <legend>Before you start</legend>
+        <p>Your file stays in this tab, but the address text of each row is sent to the U.S. Census Bureau geocoder, and to Esri ArcGIS if you added a token. Both are outside services.</p>
+        <label class="check ack-check"><input type="checkbox" id="ack">
+          <span>I confirm that:
+            <span class="ack-list">
+              <span>my organization allows sending these addresses to the services named above;</span>
+              <span>the ID column holds a random study ID, not a medical record number, SSN, account number or other identifier;</span>
+              <span>my organization, not JHFRC or UTC, is responsible for deciding what data is processed here and for meeting HIPAA and our data agreements.</span>
+            </span>
+          </span>
+        </label>
+      </fieldset>
+      <p class="estimate muted small" id="estimate" aria-live="polite"></p>
 
       <div class="notice error" id="column-error" role="alert" hidden>
         <svg class="ic"><use href="#i-alert"/></svg>
@@ -211,7 +234,7 @@
           <ol class="stages" id="stages">
             <li data-stage="census"><span class="st-dot"></span><div><strong>U.S. Census geocoder</strong><span>Current and 2020 address files</span></div></li>
             <li data-stage="retry"><span class="st-dot"></span><div><strong>Retry network errors</strong><span>Only if a lookup failed to connect</span></div></li>
-            <li data-stage="external"><span class="st-dot"></span><div><strong id="stage-external-name">OpenStreetMap</strong><span id="stage-external-note">Remaining addresses, about 1 per second</span></div></li>
+            <li data-stage="external"><span class="st-dot"></span><div><strong id="stage-external-name">ArcGIS (optional)</strong><span id="stage-external-note">Off: no ArcGIS token was added</span></div></li>
           </ol>
           <div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" id="bar"><div id="bar-fill"></div></div>
           <p class="run-detail" id="run-detail" aria-live="polite"></p>
@@ -237,14 +260,27 @@
           <p id="results-sub"></p>
         </div>
         <div class="downloads">
-          <button class="dl primary" type="button" id="dl-share">
-            <span class="dl-icon"><svg class="ic"><use href="#i-download"/></svg></span>
-            <span class="dl-text"><strong>results_to_share.xlsx</strong><span>Send to JHFRC to check the match rate. ID, tract and status only.</span></span>
-          </button>
           <button class="dl" type="button" id="dl-full">
             <span class="dl-icon"><svg class="ic"><use href="#i-download"/></svg></span>
-            <span class="dl-text"><strong>results.xlsx</strong><span>Keep on your computer. Includes addresses.</span></span>
+            <span class="dl-text"><strong>results.xlsx</strong><span>Keep on your computer. Every record with its address, coordinates and tract.</span></span>
           </button>
+          <button class="dl primary" type="button" id="dl-summary">
+            <span class="dl-icon"><svg class="ic"><use href="#i-download"/></svg></span>
+            <span class="dl-text"><strong>processing_summary.xlsx</strong><span>Send to JHFRC to check the match rate. Counts only, no IDs or tracts.</span></span>
+          </button>
+          <div class="dl-group">
+            <button class="dl" type="button" id="dl-tracts">
+              <span class="dl-icon"><svg class="ic"><use href="#i-download"/></svg></span>
+              <span class="dl-text"><strong>tract_summary.xlsx</strong><span>Records per tract, for regional maps. Share only if your agreement allows.</span></span>
+            </button>
+            <label class="small-cells" for="small-cells">Small counts
+              <select id="small-cells">
+                <option value="0">Show every count</option>
+                <option value="5">Hide counts under 5</option>
+                <option value="11">Hide counts under 11</option>
+              </select>
+            </label>
+          </div>
         </div>
       </header>
 
@@ -314,8 +350,8 @@
       <h2 class="section-title">How it works</h2>
       <div class="cards3 flow">
         <article class="info-card"><span class="num">1</span><h3>Upload</h3><p>Choose a spreadsheet with an ID and address columns. It is read inside this tab and checked for personal details before anything else happens.</p></article>
-        <article class="info-card"><span class="num">2</span><h3>Match</h3><p>Each address is looked up with the U.S. Census Bureau geocoder, then OpenStreetMap for the few the Census cannot find.</p></article>
-        <article class="info-card"><span class="num">3</span><h3>Download</h3><p>Review the results, fix any unmatched addresses, and download a share file with only the ID, tract and match status.</p></article>
+        <article class="info-card"><span class="num">2</span><h3>Match</h3><p>Each address is looked up with the U.S. Census Bureau geocoder and placed in its 2020 Census tract. An ArcGIS lookup for the few the Census cannot find is optional.</p></article>
+        <article class="info-card"><span class="num">3</span><h3>Download</h3><p>Review the results, fix any unmatched addresses, and download your full results plus count-only summaries to share.</p></article>
       </div>
     </div>
   </section>
@@ -324,13 +360,17 @@
     <div class="wrap privacy-grid">
       <div>
         <h2 class="section-title">Your data stays with you</h2>
-        <p>The file is opened and processed in this browser tab. It is never uploaded to or stored on this website. Only the address text of each record is sent to the U.S. Census Bureau geocoder, and for addresses the Census cannot find, to the OpenStreetMap Nominatim geocoder.</p>
-        <p id="privacy-arcgis">If you enter an ArcGIS token (under Advanced on the Columns step), addresses the Census cannot find go to the Esri ArcGIS World Geocoder instead of OpenStreetMap. The token is kept only in this tab and sent only to ArcGIS. ArcGIS geocoding is powered by Esri.</p>
+        <p>The file is opened and processed in this browser tab. It is never uploaded to or stored on this website, and JHFRC and UTC never see it. The address text of each record is sent to the U.S. Census Bureau geocoder, which is an outside service. Using only the Census does not by itself make a run HIPAA compliant: your organization decides whether its addresses may be sent there.</p>
+        <p id="privacy-arcgis">If you enter an ArcGIS token (under Advanced on the Columns step), addresses the Census cannot find also go to the Esri ArcGIS World Geocoder. The token is kept only in this tab and sent only to ArcGIS. The public OpenStreetMap geocoder is not used, because its usage policy does not allow bulk geocoding.</p>
+        <h3 class="terms-title" id="terms">Terms of use</h3>
+        <p class="terms">address2tract is provided free of charge and as is, without warranty of any kind. Each user and their organization are responsible for deciding whether their data may be processed with this tool and sent to the geocoding services named above, and for complying with HIPAA, their data agreements and their own policies. By using the tool you agree that JHFRC and the University of Tennessee at Chattanooga are not responsible for any disclosure of protected health information that results from that use.</p>
+        <p class="muted small">Privacy notice and terms version 2, updated November 25, 2026.</p>
       </div>
       <ul class="checks">
         <li><svg class="ic"><use href="#i-check"/></svg> Files with sensitive column names (name, DOB, phone, email and others) are refused at upload.</li>
         <li><svg class="ic"><use href="#i-check"/></svg> Cells that look like emails, phone numbers, SSNs, dates or names before an address are refused too.</li>
-        <li><svg class="ic"><use href="#i-check"/></svg> The file you send to JHFRC holds only the ID, tract and match status.</li>
+        <li><svg class="ic"><use href="#i-check"/></svg> The processing summary for JHFRC holds counts only: no IDs, addresses or tracts.</li>
+        <li><svg class="ic"><use href="#i-check"/></svg> Nothing runs until you confirm that your organization allows the lookup.</li>
         <li><svg class="ic"><use href="#i-check"/></svg> The results map is drawn in your browser from boundaries hosted on this site. If you switch on the street map, the map service (Esri, or OpenStreetMap or CARTO as a fallback) receives only the map area shown.</li>
       </ul>
     </div>
@@ -344,14 +384,14 @@
         <dl>
           <dt>Matched</dt><dd>Found by the Census geocoder in its current address file.</dd>
           <dt>Matched_Fallback</dt><dd>Found by the Census geocoder in its 2020 address file, or after tidying the street abbreviation.</dd>
-          <dt>Matched_External</dt><dd>Located by the OpenStreetMap Nominatim geocoder, then assigned to its Census tract.</dd>
+          <dt>Matched_External</dt><dd>Located by the Esri ArcGIS World Geocoder (only when you added a token), then assigned to its 2020 Census tract. The <code>match_precision</code> column says whether it was placed at a rooftop or along a street.</dd>
           <dt>No_Match</dt><dd>No geocoder could place the address. Check it for typos or a missing street number. PO boxes are never matched because they have no physical location.</dd>
           <dt>Rejected</dt><dd>The row was missing its ID or its address.</dd>
         </dl>
       </details>
       <details>
         <summary>Which tract boundaries are used?</summary>
-        <p>The Census Bureau's current tract boundaries, as returned by the Census geocoder. Tract codes are 11 digits: state (2), county (3) and tract (6).</p>
+        <p>2020 Census tracts, the same tracts used by the 2020 Census, the American Community Survey and CDC PLACES. Addresses are matched against the Census's current address file, and the tract always comes from 2020 Census geography (<code>Census2020_Current</code>), including ArcGIS matches and the results map. Tract codes are 11 digits stored as text: state (2), county (3) and tract (6).</p>
       </details>
       <details>
         <summary>My file has more than <span data-max-rows></span> rows.</summary>
@@ -359,17 +399,17 @@
       </details>
       <details>
         <summary>I fixed an address. Which file shows the change?</summary>
-        <p><code>results.xlsx</code> gains a <code>corrected_address</code> column next to your original address, so you can update your own records. The share file is unchanged in format.</p>
+        <p><code>results.xlsx</code> gains a <code>corrected_address</code> column next to your original address, so you can update your own records. The two summaries only change their counts.</p>
       </details>
       <details>
-        <summary>Is the share file the data I send to JHFRC?</summary>
-        <p>No. <code>results_to_share.xlsx</code> only lets JHFRC check how many addresses were converted to tracts. To prepare your main data file:</p>
-        <ol>
-          <li>Add the <code>census_tract_geoid</code> column to your main file by matching on your ID, with XLOOKUP in Excel or a merge in Python.</li>
-          <li>Remove all PHI: names, street addresses, dates of birth, phone numbers, emails and any other identifiers.</li>
-          <li>Send that de-identified file to JHFRC as agreed.</li>
-        </ol>
-        <p>Excel example, with your IDs in column A and <code>results_to_share.xlsx</code> open: <code>=XLOOKUP(A2, [results_to_share.xlsx]Sheet1!$A:$A, [results_to_share.xlsx]Sheet1!$B:$B, "")</code>. Adjust the sheet and column letters to match the file. IDs and tracts are stored as text, so format your ID column as text too.</p>
+        <summary>Which file do I send to JHFRC?</summary>
+        <ul>
+          <li><code>processing_summary.xlsx</code> has counts only: records, matches, match rate and which service found them. Send it so JHFRC can check how well the conversion worked.</li>
+          <li><code>tract_summary.xlsx</code> has the number of records in each tract, for regional maps. Small counts can still point to individual people. Share it only if your agreement allows, and if your agreement or privacy office sets a minimum count, choose it under <strong>Small counts</strong> before downloading.</li>
+          <li><code>results.xlsx</code> stays on your computer. It holds every address and its coordinates.</li>
+        </ul>
+        <p>To add tracts to your main data file, match on your ID with XLOOKUP in Excel or a merge in Python, using <code>results.xlsx</code>. Example, with your IDs in column A and <code>results.xlsx</code> open: <code>=XLOOKUP(A2, [results.xlsx]Sheet1!$A:$A, [results.xlsx]Sheet1!$I:$I, "")</code>, where I is the <code>census_tract_geoid</code> column when the address is in four columns (it is F for a single address column). IDs and tracts are stored as text, so format your ID column as text too.</p>
+        <p><strong>A file with tracts is not de-identified.</strong> Under the HIPAA Safe Harbor method, any geographic unit smaller than a state, including a census tract, is itself an identifier. A record-level file with tracts is still protected health information (it may qualify as a limited data set, which requires a data use agreement). Send record-level data to JHFRC only under a signed agreement, and remove every field that agreement does not allow.</p>
       </details>
       <details>
         <summary>How do I get an ArcGIS API key?</summary>
@@ -388,7 +428,8 @@
       <img class="logo" src="assets/utc24-jhf-shrt-hrz-logo-inverted-rgb.svg" alt="UTC Journey Health Foundation">
       <div>
         <p>Built by the Journey Health Foundation Research Center, University of Tennessee at Chattanooga. Questions: <a href="mailto:mohith-addepalli@utc.edu">mohith-addepalli@utc.edu</a></p>
-        <p>Geocoding by the <a href="https://geocoding.geo.census.gov/">U.S. Census Bureau</a> and <a href="https://nominatim.openstreetmap.org/">Nominatim</a> (data &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>, ODbL). <a href="https://github.com/amohith7/jhfrc-address2tract">Source code</a>.</p>
+        <p>Geocoding by the <a href="https://geocoding.geo.census.gov/">U.S. Census Bureau</a>, and by Esri ArcGIS when a token is added. <a href="https://github.com/amohith7/jhfrc-address2tract">Source code</a>. <a href="#terms">Terms of use</a>.</p>
+        <p>Version 2026.11.25, updated November 25, 2026.</p>
       </div>
     </div>
   </footer>
@@ -396,15 +437,15 @@
   <div class="toasts" id="toasts" aria-live="polite" aria-atomic="false"></div>
 
   <script src="assets/vendor/xlsx.full.min.js?v=cc015130"></script>
-  <script src="assets/core.js?v=ac8d1d6b"></script>
-  <script src="assets/geocoder.js?v=85690ccd"></script>
+  <script src="assets/core.js?v=4d809f87"></script>
+  <script src="assets/geocoder.js?v=a0b2ea9d"></script>
   <script src="assets/vendor/leaflet.js?v=db49d009"></script>
   <script src="assets/vendor/topojson-client.min.js?v=25cd02ae"></script>
   <script src="assets/sample.js?v=e79a5b6a"></script>
   <script src="assets/config.js?v=28924da7"></script>
   <script src="assets/tractmap.js?v=7834f1ed"></script>
-  <script src="assets/hero_tracts.js?v=2e14898e"></script>
+  <script src="assets/hero_tracts.js?v=af3fad53"></script>
   <script src="assets/hero_demo.js?v=93550fb3"></script>
-  <script src="assets/app.js?v=395cb481"></script>
+  <script src="assets/app.js?v=80ed9815"></script>
 </body>
 </html>

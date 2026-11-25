@@ -120,7 +120,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--tract-dataset",
         help=(
             "Path to an existing Census tract GeoPackage "
-            "(default: data/reference/census_tracts.gpkg)."
+            "(default: data/reference/census_tracts_2020.gpkg)."
         ),
     )
     parser.add_argument(
@@ -1133,9 +1133,9 @@ def main() -> None:
         provider = args.external_provider or geo_cfg.get(
             "external_provider", "nominatim"
         )
-        ext_on = config.get("use_external_fallback", True) and not (
-            args.no_external_fallback
-        )
+        ext_on = (
+            config.get("use_external_fallback", False) or args.use_external_fallback
+        ) and not args.no_external_fallback
         print()
         print("=" * 64)
         print("  EGRESS NOT APPROVED — nothing was sent. Dry run only.")

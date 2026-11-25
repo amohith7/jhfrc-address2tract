@@ -8,6 +8,10 @@
   "use strict";
 
   const MAX_ROWS = 5000;
+  // Set in index.html so the footer and the downloads quote the same version.
+  const APP_VERSION = (document.querySelector('meta[name="a2t-version"]') || {}).content || "";
+  // ID column names that suggest a medical record, account or member number.
+  const SENSITIVE_ID = /mrn|medical|patient|chart|account|acct|member|insur|ssn|social|encounter|visit/i;
   const PAGE_SIZE = 50;
   const FEED_SIZE = 8;
   const NONE = "";
@@ -16,7 +20,7 @@
   const STATUS_LABELS = {
     Matched: "Census",
     Matched_Fallback: "Census (2020 / tidied)",
-    Matched_External: "OpenStreetMap",
+    Matched_External: "ArcGIS",
     No_Match: "Unmatched",
     Rejected: "Rejected",
   };
@@ -126,14 +130,6 @@
     });
   }
 
-  async function fetchJson(url, params) {
-    const res = await fetch(url + "?" + new URLSearchParams(params).toString(), {
-      headers: { Accept: "application/json" },
-    });
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    return res.json();
-  }
-
   /**
    * ArcGIS over a form POST: a "simple" CORS request (no preflight), and the
    * token travels in the request body rather than the URL, so it stays out of
@@ -150,7 +146,7 @@
     return res.json();
   }
 
-  const transport = { jsonp, fetchJson, postForm, sleep: (ms) => new Promise((r) => setTimeout(r, ms)) };
+  const transport = { jsonp, postForm, sleep: (ms) => new Promise((r) => setTimeout(r, ms)) };
 
   // ------------------------------------------------------------ ArcGIS mode
 
@@ -164,15 +160,11 @@
     return $("arcgis-token").value.trim();
   }
 
-  /** Label the external step after whichever provider will run. */
+  /** Describe the optional ArcGIS step for this run. */
   function setExternalProvider(useArcgis) {
-    const name = useArcgis ? "ArcGIS" : "OpenStreetMap";
-    STATUS_LABELS.Matched_External = name;
-    COUNTERS[2][1] = name;
-    $("stage-external-name").textContent = name;
     $("stage-external-note").textContent = useArcgis
-      ? "Remaining addresses, with your ArcGIS token"
-      : "Remaining addresses, about 1 per second";
+      ? "Addresses the Census could not find, with your token"
+      : "Off: no ArcGIS token was added";
   }
 
   function initArcgis() {
@@ -478,6 +470,33 @@
     } else {
       ex.append(el("span", { class: "muted", text: "Choose the address column(s) to see an example lookup." }));
     }
+
+    // Warn when the ID column looks like a medical record or account number.
+    $("id-warning").hidden = !(cols.id && SENSITIVE_ID.test(cols.id));
+    renderEstimate(cols);
+  }
+
+  /**
+   * Rough run time: the Census answers about 5 to 10 addresses a second with
+   * six lookups in flight; misses take longer because both address files and
+   * a tidied street are tried.
+   */
+  function renderEstimate(cols) {
+    const out = $("estimate");
+    if (!cols.id || !(cols.address || cols.street)) {
+      out.textContent = "";
+      return;
+    }
+    const n = state.rows.filter((r) => {
+      const addr = cols.address ? A2T.cleanCell(r[cols.address]) : A2T.combineAddress(r, cols);
+      return !A2T.isBlank(addr) && !A2T.isBlank(A2T.cleanCell(r[cols.id]));
+    }).length;
+    const lo = Math.max(5, n / 10);
+    const hi = Math.max(10, n / 5);
+    out.textContent =
+      "Estimated time for " + fmt(n) + (n === 1 ? " address: " : " addresses: ") +
+      (hi < 60 ? "under a minute" : "about " + formatDuration(lo) + " to " + formatDuration(hi)) +
+      ". Keep the tab open while it runs.";
   }
 
   /** Same checks the Python tool runs before geocoding. Returns an error or "". */
@@ -498,6 +517,7 @@
         dups.slice(0, 10).join(", ") + ". Please fix the duplicates and choose the file again."
       );
     }
+    if (!$("ack").checked) return "Please read the confirmation above the Start button and tick the box.";
     return "";
   }
 
@@ -506,7 +526,7 @@
   const COUNTERS = [
     ["Matched", "Census"],
     ["Matched_Fallback", "Census 2020 / tidied"],
-    ["Matched_External", "OpenStreetMap"],
+    ["Matched_External", "ArcGIS"],
     ["pending", "No match yet"],
   ];
 
@@ -531,6 +551,7 @@
     }
     $("column-error").hidden = true;
     state.cols = cols;
+    state.processedOn = localDate();
     state.records = A2TGeocoder.buildRecords(state.rows, cols);
     state.edits.clear();
     state.view = { filter: "all", q: "", sortKey: "", sortDir: 1, page: 0, tract: "", tractName: "" };
@@ -927,6 +948,12 @@
 
   // ---------------------------------------------------------------- downloads
 
+  /** Today's date in the user's time zone as YYYY-MM-DD. */
+  function localDate() {
+    const d = new Date();
+    return [d.getFullYear(), String(d.getMonth() + 1).padStart(2, "0"), String(d.getDate()).padStart(2, "0")].join("-");
+  }
+
   /** Write rows to .xlsx with the given columns stored as Excel text. */
   function writeXlsx(rows, header, textCols, fileName) {
     const ws = XLSX.utils.json_to_sheet(rows, { header });
@@ -941,15 +968,44 @@
         ws[ref].z = "@";
       }
     });
-    ws["!cols"] = header.map((h) => ({ wch: Math.max(12, Math.min(48, String(h).length + 4)) }));
+    const widest = (h) => rows.reduce((w, r) => Math.max(w, String(r[h] ?? "").length), String(h).length);
+    ws["!cols"] = header.map((h) => ({ wch: Math.max(12, Math.min(60, widest(h) + 2)) }));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
     XLSX.writeFile(wb, fileName);
   }
 
-  function download(rows, fileName) {
-    writeXlsx(rows, Object.keys(rows[0] || {}), [state.cols.id, "census_tract_geoid"], fileName);
+  function download(rows, fileName, header) {
+    writeXlsx(rows, header || Object.keys(rows[0] || {}), [state.cols && state.cols.id, "census_tract_geoid"].filter(Boolean), fileName);
     toast("Downloaded " + fileName, "ok");
+  }
+
+  function downloadSummary() {
+    const rows = A2TGeocoder.processingSummary(state.records, {
+      processedOn: state.processedOn,
+      arcgis: Boolean(arcgisToken()),
+      appVersion: APP_VERSION,
+    });
+    download(rows, "processing_summary.xlsx", ["item", "value"]);
+  }
+
+  function downloadTracts() {
+    const min = Number($("small-cells").value) || 0;
+    const rows = A2TGeocoder.tractSummary(state.records, min);
+    download(rows, "tract_summary.xlsx", ["census_tract_geoid", "records", "geography_vintage"]);
+  }
+
+  /** Blank input file with the column names the page guesses automatically. */
+  const TEMPLATE_HEADER = ["client_id", "street", "city", "state", "zip"];
+  function downloadTemplate(kind) {
+    if (kind === "csv") {
+      const blob = new Blob([TEMPLATE_HEADER.join(",") + "\r\n"], { type: "text/csv" });
+      const url = URL.createObjectURL(blob);
+      el("a", { href: url, download: "address2tract_template.csv" }).click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } else {
+      writeXlsx([], TEMPLATE_HEADER, TEMPLATE_HEADER, "address2tract_template.xlsx");
+    }
   }
 
   // ------------------------------------------------------------------- wiring
@@ -982,8 +1038,13 @@
   $("start").addEventListener("click", start);
   initArcgis();
   $("cancel").addEventListener("click", () => state.controller && state.controller.abort());
-  $("dl-share").addEventListener("click", () => download(A2TGeocoder.shareRows(state.records, state.cols), "results_to_share.xlsx"));
-  $("dl-full").addEventListener("click", () => download(A2TGeocoder.resultRows(state.records, state.cols), "results.xlsx"));
+  $("dl-full").addEventListener("click", () => download(A2TGeocoder.resultRows(state.records, state.cols, state.processedOn), "results.xlsx"));
+  $("dl-summary").addEventListener("click", downloadSummary);
+  $("dl-tracts").addEventListener("click", downloadTracts);
+  document.querySelectorAll("[data-template]").forEach((b) => b.addEventListener("click", () => downloadTemplate(b.dataset.template)));
+  $("ack").addEventListener("change", () => {
+    if ($("ack").checked) $("column-error").hidden = true;
+  });
   $("map-refit").addEventListener("click", () => window.A2TMap && A2TMap.refit());
   if (window.A2TMap) A2TMap.onSelect(filterToTract);
   $("map-streets").addEventListener("change", (e) => window.A2TMap && A2TMap.setStreetMap(e.target.checked));

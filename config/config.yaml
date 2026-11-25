@@ -40,11 +40,12 @@ tract_source: cb500k
 # geocoder (Geocodio, Smarty) would be simpler and higher-yield but needs a paid
 # key and is not used here.
 #
-# Enabled by default so every run gets the highest match rate. The external
-# step only runs for addresses the Census cannot find (a small residual on most
-# files) and adds roughly one second per such address. Turn it off with the
-# --no-external-fallback flag or by setting this to false.
-use_external_fallback: true
+# Off by default: with it off, addresses go to the Census geocoder only. The
+# public OpenStreetMap (Nominatim) server's usage policy does not allow bulk
+# geocoding, so do not point this at it for client files. If your organization
+# allows it, turn it on with external_provider "arcgis" and a token (see
+# geocoder.external_provider below).
+use_external_fallback: false
 
 # ZIP-approximate last-resort fallback (off by default). After ALL geocoding,
 # assign an APPROXIMATE tract to any still-unmatched row from the centroid of its

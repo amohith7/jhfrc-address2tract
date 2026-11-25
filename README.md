@@ -6,9 +6,9 @@ Converts a file of addresses into U.S. Census tract IDs (GEOIDs), so JHFRC can l
 
 **https://amohith7.github.io/jhfrc-address2tract/**
 
-Open the page, choose your file, match your columns, and download the results. Nothing to install. Your file is processed inside your browser and is never uploaded to or stored on the site; only each address is sent to the U.S. Census Bureau geocoder (and, for addresses the Census cannot find, to the OpenStreetMap Nominatim geocoder). The website follows the same rules as this tool: the same privacy screen on column names, unique-ID check, address cleanup and output files (`results.xlsx` to keep, `results_to_share.xlsx` to send to JHFRC).
+Open the page, choose your file, match your columns, and download the results. Nothing to install. Your file is processed inside your browser and is never uploaded to or stored on the site; only each address is sent to the U.S. Census Bureau geocoder. Before a run starts, the user confirms that their organization allows that, that the ID column holds a random study ID, and that their organization (not JHFRC or UTC) is responsible for the data it processes. The website uses the same privacy screen on column names, unique-ID check and address cleanup as this tool, and gives three downloads: `results.xlsx` to keep (every record with its address, coordinates, tract, provider and precision), `processing_summary.xlsx` to send to JHFRC (counts and match rate only), and `tract_summary.xlsx` (records per tract, with an option to hide small counts) for regional maps where an agreement allows it. All tracts are 2020 Census tracts.
 
-If JHFRC sends you a temporary ArcGIS token, open **Advanced: ArcGIS lookup** on the Columns step and paste it there; addresses the Census cannot find are then looked up with the ArcGIS World Geocoder instead of OpenStreetMap. The token stays in that browser tab only: it is never saved, never added to the page address and never written to your results files, and it is sent only to ArcGIS.
+If JHFRC sends you a temporary ArcGIS token, open **Advanced: ArcGIS lookup** on the Columns step and paste it there; addresses the Census cannot find are then looked up with the ArcGIS World Geocoder. Without a token, nothing is sent anywhere but the Census. The public OpenStreetMap geocoder is not used, because its usage policy does not allow bulk geocoding. The token stays in that browser tab only: it is never saved, never added to the page address and never written to your results files, and it is sent only to ArcGIS.
 
 On the results page you can filter, search and sort every record, correct unmatched addresses in place and retry just those rows (corrections appear in a `corrected_address` column of `results.xlsx`), see a map of your census tracts shaded by how many records fall in each (drawn in your browser from tract boundaries hosted on the site; an optional **Show street map** switch adds the Esri basemap, and the map service then receives only the map area shown, never addresses or tract IDs), or click **Try it with sample data** to see it work on public places around Chattanooga first.
 
@@ -111,17 +111,19 @@ For the best match rate, include the full city, state, and ZIP in every address.
 
 ## Sharing results with JHFRC
 
-The tool writes a second file next to your output whose name ends in **`_to_share`** (for example `results_to_share.xlsx`). It contains only your ID code, the Census tract, and the match status, with **no street address, no names, and no PHI**. Send it so JHFRC can check the address-to-tract conversion rate. Keep the full output (which includes the address, for your own checking) on your own computer.
+The website gives a count-only `processing_summary.xlsx` for JHFRC's quality check and a `tract_summary.xlsx` of records per tract. The command-line tool writes a file ending in **`_to_share`** (for example `results_to_share.xlsx`) with your ID, the Census tract and the match status. Keep the full output, which includes the address, on your own computer.
 
-**The share file is not your main data file.** To prepare the data you send to JHFRC:
+**A file with tracts is not de-identified.** Under the HIPAA Safe Harbor method, any geographic unit smaller than a state, including a census tract, is itself an identifier. Record-level data with tracts (including the `_to_share` file) is still protected health information; it may qualify as a limited data set, which requires a data use agreement. Small tract counts can also point to individuals, so follow your agreement's minimum count when sharing `tract_summary.xlsx`. To prepare data for JHFRC:
 
 1. Add the Census tract to your main file by matching on your ID (XLOOKUP in Excel, or `pandas.merge` in Python).
-2. Remove all PHI: names, street addresses, dates of birth, phone numbers, emails and any other identifiers.
-3. Send that de-identified file to JHFRC as agreed.
+2. Remove every field your agreement with JHFRC does not allow.
+3. Send it only under that signed agreement.
+
+**Tract geography.** Every tract is a 2020 Census tract: the Census geocoder is asked for geography vintage `Census2020_Current` (current address file, 2020 tracts), and the local tract file is the Census `cb_2020_us_tract_500k` (or `tl_2020` per state). Results line up with the 2020 Census, the ACS and CDC PLACES. Tract files cached by older versions (`census_tracts.gpkg`) are not reused; the 2020 file is downloaded once on the next run.
 
 **Getting an ArcGIS API key.** Email JHFRC for a temporary key, shared through UT Vault. Or create your own: sign up for a free ArcGIS Location Platform account at https://location.arcgis.com/, create an API key under Developer credentials with the *Geocoding (not stored)* privilege, and pass it with `--external-provider arcgis --arcgis-token <key>` (or paste it under **Advanced: ArcGIS lookup** on the website).
 
-Use a non-identifying ID (an internal code), not a name or an SSN. The ID and Census tract are written as text, so Excel lookup functions like XLOOKUP match them reliably.
+Use a random study ID, not a name, SSN, medical record number or account number. The ID and Census tract are written as text, so Excel lookup functions like XLOOKUP match them reliably.
 
 ## Help
 
@@ -132,11 +134,11 @@ Questions, errors, or a high `No_Match` rate: email **mohith-addepalli@utc.edu**
 
 ## Advanced options (technical users)
 
-A normal run already uses Census plus a free OpenStreetMap fallback and gets the highest match rate. The following are for larger or harder jobs.
+A normal run uses the Census geocoder only. The following are for larger or harder jobs.
 
 **Network control.** Nothing is sent until you pass `--approve-egress`; without it the tool prints exactly what it *would* send, then exits. The only destinations are the geocoders (`geocoding.geo.census.gov`, plus `api.geoapify.com` / `geocode.arcgis.com` / `nominatim.openstreetmap.org` if selected) and the one-time Census map download. Tract assignment is fully local; nothing goes anywhere else.
 
-**Stronger geocoders for the residual** (`--external-provider`):
+**A second geocoder for the residual** is off by default. Turn it on with `--use-external-fallback` and choose `--external-provider` (only if your organization allows sending those addresses to that service). Do not use the default `nominatim` (the public OpenStreetMap server) for client files: its usage policy does not allow bulk geocoding.
 - `geoapify` — free API key (3,000/day); accepts a match only if its ZIP equals the input ZIP.
 - `arcgis` — needs a token; best coverage.
 
@@ -149,9 +151,10 @@ Supply keys per run with `--arcgis-token` / `--geoapify-key`, or via the `ARCGIS
 | `--zip-approx` | Last resort: give any still-unmatched row an **approximate** tract from its ZIP centroid (marked `Matched_ZIP_Approx`). Coarse — a ZIP spans many tracts. |
 | `--retry-failed` | Re-process only the `No_Match`/`Tie` rows of a previous result file and merge new matches back in. |
 | `--concurrency N` | Requests sent in parallel (default 6). |
-| `--no-fallback` / `--no-external-fallback` | Turn off the Census one-at-a-time retry / the external lookup. |
+| `--no-fallback` | Turn off the Census one-at-a-time retry. |
+| `--use-external-fallback` / `--no-external-fallback` | Turn the second-geocoder lookup on / off for this run (off by default). |
 | `--sheet-name` / `--chunk-size` / `--config` | Excel sheet to read / rows per block / alternate settings file. |
 
-**Large files.** Over 50,000 rows the tool processes the file in smaller sections. If the run is interrupted, rerun the same command and it will safely continue. Over 100,000 rows the free OpenStreetMap fallback auto-disables (use `--external-provider arcgis`/`geoapify` for large residuals). Over ~1,048,576 rows the output is written as CSV.
+**Large files.** Over 50,000 rows the tool processes the file in smaller sections. If the run is interrupted, rerun the same command and it will safely continue. Over 100,000 rows an OpenStreetMap lookup, if turned on, auto-disables (use `--external-provider arcgis`/`geoapify` for large residuals). Over ~1,048,576 rows the output is written as CSV.
 
 **All `match_status` values:** `Matched`, `Matched_Fallback`, `Matched_External`, `Matched_CensusAPI_Backup`, `Matched_ZIP_Approx` (approximate), `Tie`, `No_Match`, `Rejected`.
