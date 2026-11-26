@@ -496,7 +496,7 @@
     out.textContent =
       "Estimated time for " + fmt(n) + (n === 1 ? " address: " : " addresses: ") +
       (hi < 60 ? "under a minute" : "about " + formatDuration(lo) + " to " + formatDuration(hi)) +
-      ". Keep the tab open while it runs.";
+      ". Addresses the Census cannot find on the first try, and ArcGIS lookups, can make it take longer. Keep the tab open while it runs.";
   }
 
   /** Same checks the Python tool runs before geocoding. Returns an error or "". */

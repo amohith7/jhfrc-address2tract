@@ -12,9 +12,9 @@ Providers (config-selectable, all free):
   - nominatim : OpenStreetMap. No API key. Public server policy is ≤1 req/s and
                 prohibits bulk use, so this is appropriate only for a SMALL
                 residual set. Requires a descriptive User-Agent.
-  - arcgis    : Esri ArcGIS World Geocoder. Needs a free developer token but
-                offers higher throughput and better real-address coverage; use
-                it when the residual set is large.
+  - arcgis    : Esri ArcGIS World Geocoder. Needs a token with the
+                "Geocoding (stored)" privilege; requests use forStorage=true
+                because results are saved, and stored geocodes are billed.
   - geoapify  : Geoapify Geocoding API. Needs a free API key (3,000 requests/day
                 free, no credit card). Good real-address coverage; a solid
                 free choice for a large residual. Precision is judged by
@@ -167,6 +167,9 @@ def _geocode_arcgis(address: str, token: str) -> tuple | None:
             "maxLocations": 5,
             "outFields": "Addr_type,Score",
             "countryCode": "USA",
+            # Results are written to the output file, so Esri's terms require a
+            # stored geocode (billed; needs the "Geocoding (stored)" privilege).
+            "forStorage": "true",
             "token": token,
         },
         timeout=30,
