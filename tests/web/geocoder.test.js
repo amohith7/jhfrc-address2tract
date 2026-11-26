@@ -304,6 +304,7 @@ test("with a token, ArcGIS looks up the Census misses and gets the token in the 
   assert.equal(p.token, "TEST-TOKEN");
   assert.ok(!url.includes("TEST-TOKEN") && !url.includes("?"), "token must not be in the URL");
   assert.equal(p.countryCode, "USA");
+  assert.equal(p.forStorage, "true", "results are saved, so Esri requires a stored geocode");
   assert.equal(t.calls.sleeps.length, 0, "no 1-second spacing for ArcGIS");
 });
 
@@ -376,7 +377,7 @@ test("checkArcgisToken reports success, ArcGIS's own error, and network trouble"
   const bad = { postForm: async () => ({ error: { code: 403, message: "User does not have permissions.", details: [] } }), sleep: async () => {} };
   const r = await G.checkArcgisToken(bad, "T");
   assert.equal(r.ok, false);
-  assert.match(r.message, /geocoding rights or credits \(ArcGIS said: 403 User does not have permissions\.\)/);
+  assert.match(r.message, /Geocoding \(stored\) privilege or credits \(ArcGIS said: 403 User does not have permissions\.\)/);
   const down = { postForm: async () => { throw new Error("Failed to fetch"); }, sleep: async () => {} };
   assert.match((await G.checkArcgisToken(down, "T")).message, /Could not reach ArcGIS/);
   assert.equal((await G.checkArcgisToken(ok, "   ")).ok, false);

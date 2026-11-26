@@ -231,7 +231,7 @@
     if (code === 498 || code === 499 || /token/i.test(raw)) {
       return "ArcGIS did not accept the token" + said;
     }
-    if (code === 403) return "ArcGIS refused the request; the token may lack geocoding rights or credits" + said;
+    if (code === 403) return "ArcGIS refused the request; the token may lack the Geocoding (stored) privilege or credits" + said;
     return "ArcGIS returned an error" + said;
   }
 
@@ -260,6 +260,9 @@
       maxLocations: 5,
       outFields: "Addr_type,Score",
       countryCode: "USA",
+      // The results file keeps ArcGIS coordinates, so Esri's terms require a
+      // stored geocode (billed separately; needs the "Geocoding (stored)" privilege).
+      forStorage: "true",
       token: cleanToken(ctx.opts.arcgisToken),
     };
     const order = ctx.arcgisHost != null ? [ctx.arcgisHost] : ARCGIS_URLS.map((_, i) => i);

@@ -121,7 +121,7 @@ The website gives a count-only `processing_summary.xlsx` for JHFRC's quality che
 
 **Tract geography.** Every tract is a 2020 Census tract: the Census geocoder is asked for geography vintage `Census2020_Current` (current address file, 2020 tracts), and the local tract file is the Census `cb_2020_us_tract_500k` (or `tl_2020` per state). Results line up with the 2020 Census, the ACS and CDC PLACES. Tract files cached by older versions (`census_tracts.gpkg`) are not reused; the 2020 file is downloaded once on the next run.
 
-**Getting an ArcGIS API key.** Email JHFRC for a temporary key, shared through UT Vault. Or create your own: sign up for a free ArcGIS Location Platform account at https://location.arcgis.com/, create an API key under Developer credentials with the *Geocoding (not stored)* privilege, and pass it with `--external-provider arcgis --arcgis-token <key>` (or paste it under **Advanced: ArcGIS lookup** on the website).
+**Getting an ArcGIS API key.** Email JHFRC for a temporary key, shared through UT Vault. Or create your own: sign up for a free ArcGIS Location Platform account at https://location.arcgis.com/, create an API key under Developer credentials with the *Geocoding (stored)* privilege (the tool keeps ArcGIS results in its output, so requests use `forStorage=true`; Esri bills stored geocodes per address and they are not in the free allowance, see https://location.arcgis.com/pricing/), and pass it with `--external-provider arcgis --arcgis-token <key>` (or paste it under **Advanced: ArcGIS lookup** on the website).
 
 Use a random study ID, not a name, SSN, medical record number or account number. The ID and Census tract are written as text, so Excel lookup functions like XLOOKUP match them reliably.
 
